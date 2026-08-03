@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Cthulu.Application/Cthulu.Application.csproj" />
+    <Project Path="src/Cthulu.Domain/Cthulu.Domain.csproj" />
+    <Project Path="src/Cthulu.Web/Cthulu.Web.csproj" />
+  </Folder>
+</Solution>

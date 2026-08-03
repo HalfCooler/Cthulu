@@ -1,0 +1,1340 @@
+@page "/room/{Code}"
+@implements IDisposable
+@inject GameClientService Game
+@inject NavigationManager Nav
+
+<PageTitle>房间 @Code · 克苏鲁之约</PageTitle>
+
+@* Floating toast for illegal ops / hub errors (ErrorCode + Message) *@
+@if (!string.IsNullOrEmpty(_toastText))
+{
+    <div class="toast-host" role="alert" aria-live="assertive">
+        <div class="toast toast-error">
+            <div class="toast-body">
+                <strong class="toast-title">操作失败</strong>
+                <div class="toast-msg">@_toastText</div>
+            </div>
+            <button type="button" class="toast-close" @onclick="DismissToast" title="关闭">×</button>
+        </div>
+    </div>
+}
+
+<div class="room-page">
+    @if (_loading)
+    {
+        <p class="muted">正在连接房间…</p>
+    }
+    else if (Game.CurrentView is null)
+    {
+        <div class="panel empty-state">
+            <h2>尚未进入该房间</h2>
+            <p class="muted">若你是从链接直接打开，请先用房间码与原昵称加入（可重连恢复座位）。</p>
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+            <div class="inline-join">
+                <label class="field">
+                    <span>昵称</span>
+                    <input @bind="_rejoinName" maxlength="16" placeholder="你的昵称" />
+                </label>
+                <button class="btn btn-primary" disabled="@_busy" @onclick="RejoinAsync">加入 @_displayCode</button>
+                <a class="btn btn-link" href="/">返回首页</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        var view = Game.CurrentView;
+        var inGame = view.Phase != "Lobby";
+        var finished = view.IsFinished;
+
+        <header class="room-header @(finished ? "finished-header" : null)">
+            <div>
+                <div class="room-code-label">房间码</div>
+                <div class="room-code">@view.RoomCode</div>
+            </div>
+            <div class="room-meta">
+                <div>
+                    <span class="label">阶段</span>
+                    @view.PhaseDisplayName
+                    @if (finished)
+                    {
+                        <span class="badge finished-badge">对局结束</span>
+                    }
+                </div>
+                @if (inGame && !finished)
+                {
+                    <div><span class="label">筹备日</span> 第 @view.PrepDayNumber 天</div>
+                    <div><span class="label">循环</span> @(view.CycleIndex + 1) · 段内剩余 @view.PrepDaysRemainingInCycle</div>
+                    <div><span class="label">庄家</span> @(view.DealerName ?? "—")</div>
+                    @if (!string.IsNullOrEmpty(view.CurrentActorName))
+                    {
+                        <div><span class="label">行动者</span> @view.CurrentActorName</div>
+                    }
+                }
+                <div><span class="label">人数</span> @view.PlayerCount / @view.MaxPlayers</div>
+                <div><span class="label">你</span> @view.SelfName @(view.IsHost ? "（房主）" : "")</div>
+            </div>
+        </header>
+
+        @if (finished && view.ScorePreview is not null)
+        {
+            <section class="panel final-panel">
+                <h2 class="final-title">终局计分</h2>
+                <p class="final-sub">对局已结束 · 并列最高分均为胜者 · 下方可继续查看事件日志与祭品持有</p>
+                <div class="final-scores">
+                    @{
+                        var rank = 0;
+                        var lastTotal = int.MinValue;
+                        var displayRank = 0;
+                    }
+                    @foreach (var s in view.ScorePreview.Players)
+                    {
+                        rank++;
+                        if (s.Total != lastTotal)
+                        {
+                            displayRank = rank;
+                            lastTotal = s.Total;
+                        }
+                        <div class="final-row @(s.IsLeader ? "winner" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
+                            <span class="final-rank">#@displayRank</span>
+                            <span class="final-name">
+                                @s.Name
+                                @if (s.IsLeader)
+                                {
+                                    <span class="badge winner-badge">胜者</span>
+                                }
+                            </span>
+                            <span class="final-total">@s.Total 分</span>
+                        </div>
+                    }
+                </div>
+                <div class="action-bar compact">
+                    <a class="btn btn-primary" href="/">返回首页开新局</a>
+                    <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步视图</button>
+                </div>
+            </section>
+        }
+        else if (view.ScorePreview is not null && inGame)
+        {
+            <section class="score-bar panel">
+                <div class="score-bar-title">
+                    当前理论分
+                    @if (!view.ScorePreview.IsFinal)
+                    {
+                        <span class="badge score-badge">非最终</span>
+                    }
+                </div>
+                <div class="score-row">
+                    @foreach (var s in view.ScorePreview.Players)
+                    {
+                        <div class="score-chip @(s.IsLeader ? "leader" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
+                            <span class="score-name">@s.Name</span>
+                            <span class="score-val">@s.Total</span>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+
+        @if (!string.IsNullOrEmpty(view.Hint) && !finished)
+        {
+            <div class="alert alert-info">@view.Hint</div>
+        }
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert alert-error">@_error</div>
+        }
+
+        @if (!inGame)
+        {
+            <section class="panel">
+                <h2>成员列表</h2>
+                @if (view.Players.Count == 0)
+                {
+                    <p class="muted empty-hint">尚无成员（异常状态，请重新加入）</p>
+                }
+                else
+                {
+                    <table class="member-table">
+                        <thead>
+                            <tr>
+                                <th>座位</th>
+                                <th>昵称</th>
+                                <th>状态</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in view.Players)
+                            {
+                                <tr class="@(p.IsSelf ? "self-row" : null)">
+                                    <td>@p.SeatIndex</td>
+                                    <td>
+                                        @p.Name
+                                        @if (p.IsHost)
+                                        {
+                                            <span class="badge">房主</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="dot @(p.IsConnected ? "on" : "off")"></span>
+                                        @(p.IsConnected ? "在线" : "离线")
+                                    </td>
+                                    <td>@(p.IsSelf ? "（你）" : "")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+
+            @if (view.AllowDebugSeed && view.IsHost)
+            {
+                <section class="panel debug-panel">
+                    <h2>调试 · 固定种子 <span class="badge">Development</span></h2>
+                    <p class="muted small">可选。填写整数种子后开始，便于复现洗牌/发牌。留空则使用系统随机。</p>
+                    <label class="field">
+                        <span>RNG Seed</span>
+                        <input @bind="_debugSeedText" placeholder="例如 42" inputmode="numeric" />
+                    </label>
+                </section>
+            }
+
+            <div class="action-bar">
+                @if (view.IsHost)
+                {
+                    <button class="btn btn-primary"
+                            disabled="@(!view.CanStart || _busy)"
+                            @onclick="StartAsync">
+                        开始游戏
+                    </button>
+                    @if (!view.CanStart)
+                    {
+                        <span class="muted">
+                            @if (view.PlayerCount < view.MinPlayers)
+                            {
+                                <text>至少 @view.MinPlayers 人才能开始（当前 @view.PlayerCount）</text>
+                            }
+                            else
+                            {
+                                <text>无法开始</text>
+                            }
+                        </span>
+                    }
+                }
+                else
+                {
+                    <span class="muted">
+                        @if (view.PlayerCount < view.MinPlayers)
+                        {
+                            <text>等待更多玩家（至少 @view.MinPlayers 人）…</text>
+                        }
+                        else
+                        {
+                            <text>等待房主开始游戏…</text>
+                        }
+                    </span>
+                }
+                <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步</button>
+                <a class="btn btn-link" href="/">离开（回首页）</a>
+            </div>
+        }
+        else if (!finished)
+        {
+            <!-- Altar -->
+            <section class="panel">
+                <h2>祭坛 <span class="muted small">堆剩 @view.RelicDeckCount</span></h2>
+                <div class="altar-row">
+                    @if (view.Altar.Count == 0)
+                    {
+                        <span class="muted">（暂无祭品）</span>
+                    }
+                    else
+                    {
+                        @foreach (var slot in view.Altar)
+                        {
+                            var selected = _selectedSlots.Contains(slot.SlotIndex);
+                            <button type="button"
+                                    class="altar-card @(selected ? "selected" : null)"
+                                    @onclick="() => ToggleSlot(slot.SlotIndex)">
+                                <div class="altar-rank">序号 @slot.Rank</div>
+                                <div class="altar-name">@slot.DisplayName</div>
+                                <div class="altar-flags">
+                                    @if (slot.ReverseThinking)
+                                    {
+                                        <span class="flag reverse">逆向</span>
+                                    }
+                                    @if (slot.EvilProphecy)
+                                    {
+                                        <span class="flag evil">预言</span>
+                                    }
+                                </div>
+                            </button>
+                        }
+                    }
+                </div>
+            </section>
+
+            <!-- Players -->
+            <section class="panel">
+                <h2>玩家</h2>
+                <div class="opponents-row">
+                    @foreach (var p in view.Players)
+                    {
+                        var playerSel = _selectedPlayerIds.Contains(p.PlayerId);
+                        <div class="player-card @(p.IsSelf ? "self" : null) @(p.IsCurrentActor ? "actor" : null) @(playerSel ? "selected-player" : null)"
+                             @onclick="() => TogglePlayer(p.PlayerId)">
+                            <div class="player-name">
+                                @p.Name
+                                @if (p.IsDealer)
+                                {
+                                    <span class="badge">庄</span>
+                                }
+                                @if (p.IsSelf)
+                                {
+                                    <span class="badge self-badge">你</span>
+                                }
+                            </div>
+                            <div class="player-counts">
+                                宝石 @p.GemCount · 秘术 @p.ArcanaCount
+                                @if (p.VirtualForbiddenKnowledge > 0)
+                                {
+                                    <span> · 虚禁 @p.VirtualForbiddenKnowledge</span>
+                                }
+                            </div>
+                            <div class="player-offer">
+                                @if (p.HasOffer)
+                                {
+                                    <span>供奉 @p.OfferGemCount 张</span>
+                                }
+                                else if (view.Phase == "Prep_Offer")
+                                {
+                                    <span class="muted">未供奉</span>
+                                }
+                            </div>
+                            @if (p.Relics.Count > 0)
+                            {
+                                <div class="player-relics">
+                                    @foreach (var r in p.Relics)
+                                    {
+                                        var rSel = _selectedRelicId == r.InstanceId && _tradeSellerId == p.PlayerId;
+                                        <button type="button"
+                                                class="relic-chip @(r.TradedSuccessfully ? "traded" : null) @(rSel ? "selected" : null)"
+                                                title="@(r.TradedSuccessfully ? "已交易不可再卖" : "点击选为交易目标")"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => SelectTradeRelic(p.PlayerId, r)">
+                                            @r.DisplayName
+                                        </button>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="player-relics muted">无祭品</div>
+                            }
+                            <div class="conn">
+                                <span class="dot @(p.IsConnected ? "on" : "off")"></span>
+                                @(p.IsConnected ? "在线" : "离线")
+                                @if (view.Phase == "OfferingDay_Trade" && p.HasActedTrade)
+                                {
+                                    <span class="muted"> · 已行动</span>
+                                }
+                                @if (view.Phase == "VoteContinue" && p.HasVoted)
+                                {
+                                    <span class="muted"> · 已投票</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <!-- Active Arcana Modal -->
+            @if (view.ActiveArcana is not null)
+            {
+                var aa = view.ActiveArcana;
+                <section class="panel modal-panel">
+                    <h2>秘术进行中 · @aa.KindDisplayName</h2>
+                    <p>@aa.Prompt</p>
+                    <p class="muted small">施术者：@aa.ActorName · 步骤 @aa.StepId</p>
+
+                    @if (aa.PeekedOffer is not null)
+                    {
+                        <div class="peek-box">
+                            <strong>窥视到 @aa.PeekedOffer.TargetName：</strong>
+                            序号 @aa.PeekedOffer.Rank，sum=@aa.PeekedOffer.Sum
+                            <div class="hand-row">
+                                @foreach (var g in aa.PeekedOffer.Gems)
+                                {
+                                    <span class="card gem">@g.DisplayName</span>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @if (aa.TempCards.Count > 0)
+                    {
+                        <h3 class="subhead">待选宝石</h3>
+                        <div class="hand-row">
+                            @foreach (var g in aa.TempCards)
+                            {
+                                var sel = _stepCardIds.Contains(g.InstanceId);
+                                <button type="button"
+                                        class="card gem @(sel ? "selected" : null)"
+                                        @onclick="() => ToggleStepCard(g.InstanceId)">
+                                    @g.DisplayName
+                                </button>
+                            }
+                        </div>
+                    }
+
+                    @if (aa.CanRespond)
+                    {
+                        @if (aa.Kind == "Peek")
+                        {
+                            <div class="offer-editor">
+                                <div class="rank-picks">
+                                    <span class="muted">重供奉序号：</span>
+                                    @foreach (var r in view.AvailableRanks)
+                                    {
+                                        <button type="button"
+                                                class="chip @(_stepRank == r ? "selected" : null)"
+                                                @onclick="() => _stepRank = r">@r</button>
+                                    }
+                                </div>
+                                <p class="muted small">在手牌中选择宝石后点「重新供奉」；也可结束（仅施术者）。</p>
+                                <div class="action-bar compact">
+                                    <button class="btn btn-primary" disabled="@_busy" @onclick="PeekReOfferAsync">重新供奉</button>
+                                    @if (aa.IsActor)
+                                    {
+                                        <button class="btn btn-ghost" disabled="@_busy" @onclick="PeekDoneAsync">结束窥视</button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        else if (aa.Kind == "ArtificialBreeding")
+                        {
+                            <div class="action-bar compact">
+                                <button class="btn btn-primary" disabled="@(_busy || _stepCardIds.Count != 1)" @onclick="BreedKeepAsync">
+                                    保留选中 1 张
+                                </button>
+                            </div>
+                        }
+                        else if (aa.Kind == "Transplant")
+                        {
+                            <p class="muted small">分别选择 1 张归还（含取得的牌与自己手牌，共 2 张），顺序对应目标：@string.Join("、", aa.TargetPlayerNames)</p>
+                            <div class="hand-row">
+                                @foreach (var g in view.MyGems)
+                                {
+                                    var sel = _stepCardIds.Contains(g.InstanceId);
+                                    <button type="button"
+                                            class="card gem @(sel ? "selected" : null)"
+                                            @onclick="() => ToggleStepCard(g.InstanceId)">
+                                        @g.DisplayName
+                                    </button>
+                                }
+                            </div>
+                            <div class="action-bar compact">
+                                <button class="btn btn-primary" disabled="@(_busy || _stepCardIds.Count != 2)" @onclick="TransplantReturnAsync">
+                                    分别归还（各 1 张）
+                                </button>
+                            </div>
+                        }
+                    }
+                </section>
+            }
+
+            <!-- Trade UI -->
+            @if (view.Phase == "OfferingDay_Trade")
+            {
+                <section class="panel">
+                    <h2>供奉日 · 交易</h2>
+                    @if (view.Trade is null)
+                    {
+                        @if (view.CanProposeTrade)
+                        {
+                            <p class="muted small">点选其他玩家的祭品作为目标，再选手牌宝石出价（1～@GameRules.MaxTradeDisplayGems 张），然后发起交易；或跳过。</p>
+                            <div class="muted small">
+                                卖家：@(_tradeSellerId ?? "未选") · 祭品：@(_selectedRelicId ?? "未选") · 出价 @_selectedGems.Count / @GameRules.MaxTradeDisplayGems 张
+                            </div>
+                            <div class="action-bar compact">
+                                <button class="btn btn-primary" disabled="@_busy" @onclick="ProposeTradeAsync">发起交易</button>
+                                <button class="btn btn-ghost" disabled="@_busy" @onclick="PassTradeAsync">跳过</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="muted">等待其他玩家行动…</p>
+                        }
+                    }
+                    else
+                    {
+                        var t = view.Trade;
+                        <div class="trade-box">
+                            <div><strong>@t.BuyerName</strong> → <strong>@t.SellerName</strong> 的 @t.RelicDisplayName</div>
+                            <div class="muted small">阶段：@TradePhaseLabel(t.SubPhase) · 买家出价张数 @t.BuyerEscrowCount</div>
+                            @if (t.BuyerEscrowGems is not null)
+                            {
+                                <div class="hand-row">
+                                    @foreach (var g in t.BuyerEscrowGems)
+                                    {
+                                        <span class="card gem">@g.DisplayName</span>
+                                    }
+                                </div>
+                            }
+
+                            @if (t.SubPhase == "AwaitSellerResponse" && t.IsSeller)
+                            {
+                                <div class="action-bar compact">
+                                    <button class="btn btn-primary" disabled="@_busy" @onclick="() => RespondTradeAsync(true)">接受</button>
+                                    <button class="btn btn-ghost" disabled="@_busy" @onclick="() => RespondTradeAsync(false)">拒绝</button>
+                                </div>
+                            }
+                            else if (t.SubPhase == "AwaitBuyerChoice" && t.IsBuyer)
+                            {
+                                <div class="action-bar compact">
+                                    <button class="btn btn-ghost" disabled="@_busy" @onclick="CancelTradeAsync">原路返回</button>
+                                    <button class="btn btn-primary" disabled="@_busy" @onclick="BeginForceBuyAsync">强买</button>
+                                </div>
+                            }
+                            else if (t.SubPhase == "ForceBuyBids")
+                            {
+                                <p class="muted small">强买双盲：双方提交暗价（买家 1～@GameRules.MaxTradeDisplayGems 张，卖家 0～@GameRules.MaxTradeDisplayGems 张）。</p>
+                                @if ((t.IsBuyer && !t.BuyerBidCommitted) || (t.IsSeller && !t.SellerBidCommitted))
+                                {
+                                    <div class="muted small">已选手牌宝石 @_selectedGems.Count / @GameRules.MaxTradeDisplayGems 张作为暗价</div>
+                                    <div class="action-bar compact">
+                                        <button class="btn btn-primary" disabled="@_busy" @onclick="CommitForceBidAsync">提交暗价</button>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <p class="muted">你已提交，等待对方…</p>
+                                }
+                            }
+                            else
+                            {
+                                <p class="muted">等待交易双方操作…</p>
+                            }
+                        </div>
+                    }
+                </section>
+            }
+
+            <!-- Vote UI -->
+            @if (view.Phase == "VoteContinue")
+            {
+                <section class="panel">
+                    <h2>投票 · 是否继续下一循环？</h2>
+                    <p class="muted">过半数「继续」→ 筹备×3+供奉×1；否则筹备×1 后进入复苏日。</p>
+                    <p class="muted small">已投 @view.VoteTotalCast / @view.PlayerCount（赞成 @view.VoteYesCount）</p>
+                    @if (view.CanVote)
+                    {
+                        <div class="action-bar compact">
+                            <button class="btn btn-primary" disabled="@_busy" @onclick="() => VoteAsync(true)">继续</button>
+                            <button class="btn btn-ghost" disabled="@_busy" @onclick="() => VoteAsync(false)">结束循环</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="muted">你已投票，等待他人…</p>
+                    }
+                </section>
+            }
+
+            <!-- Recovery Auction -->
+            @if (view.Phase == "Recovery_Auction" && view.Auction is not null)
+            {
+                var aq = view.Auction;
+                <section class="panel auction-panel">
+                    <h2>复苏日 · 竞拍 第 @aq.RoundIndex / @aq.MaxAuctionRounds 次</h2>
+                    <p class="muted small">祭坛上全部祭品打包竞拍；加价 sum 须严格大于当前最高价；放弃后本轮不可再出价。</p>
+                    <div class="auction-status">
+                        <div>
+                            当前最高价张数：
+                            <strong>@aq.CurrentBidCount</strong>
+                            @if (!string.IsNullOrEmpty(aq.LeaderName))
+                            {
+                                <span> · 领先：@aq.LeaderName</span>
+                            }
+                            else
+                            {
+                                <span class="muted"> · 尚无出价</span>
+                            }
+                        </div>
+                        <div>行动者：@(aq.CurrentActorName ?? "—")</div>
+                        @if (aq.PassedPlayerNames.Count > 0)
+                        {
+                            <div class="muted small">已放弃：@string.Join("、", aq.PassedPlayerNames)</div>
+                        }
+                        @if (aq.IAmLeader && aq.MyBidGems is not null)
+                        {
+                            <div class="muted small">
+                                你的当前出价 sum=@aq.MyBidSum：
+                                @string.Join("、", aq.MyBidGems.Select(g => g.DisplayName))
+                            </div>
+                        }
+                        @if (aq.IHavePassed)
+                        {
+                            <div class="alert alert-info">你已放弃本轮竞拍</div>
+                        }
+                    </div>
+                    @if (view.CanRaiseAuction || view.CanPassAuction)
+                    {
+                        <div class="muted small">已选宝石 @_selectedGems.Count 张用于加价</div>
+                        <div class="action-bar compact">
+                            <button class="btn btn-primary" disabled="@_busy" @onclick="RaiseAuctionAsync">加价</button>
+                            <button class="btn btn-ghost" disabled="@_busy" @onclick="PassAuctionAsync">放弃</button>
+                        </div>
+                    }
+                    else if (!aq.IHavePassed)
+                    {
+                        <p class="muted">等待其他玩家出价…</p>
+                    }
+                </section>
+            }
+
+            <!-- Recovery All-In -->
+            @if (view.Phase == "Recovery_AllIn")
+            {
+                <section class="panel auction-panel">
+                    <h2>复苏日 · 全下（第 3 次）</h2>
+                    <p class="muted small">选择序号后提交：你的<strong>全部</strong>手牌宝石将作为供奉资源参与祭品结算（R1/R2/R3）。无宝石则自动不参与。</p>
+                    @if (view.HasSubmittedAllIn && view.MyOffer is not null)
+                    {
+                        <div class="alert alert-info">
+                            已提交全下：序号 @view.MyOffer.Rank，@view.MyOffer.GemCount 张（sum=@view.MyOffer.Sum）。可改序号后重新提交。
+                        </div>
+                    }
+                    @if (view.CanSubmitAllIn)
+                    {
+                        <div class="rank-picks">
+                            <span class="muted">序号：</span>
+                            @foreach (var r in view.AvailableRanks)
+                            {
+                                <button type="button"
+                                        class="chip @(_selectedRank == r ? "selected" : null)"
+                                        @onclick="() => _selectedRank = r">@r</button>
+                            }
+                        </div>
+                        <div class="action-bar compact">
+                            <button class="btn btn-primary" disabled="@_busy" @onclick="SubmitAllInAsync">
+                                提交全下（全部手牌宝石）
+                            </button>
+                        </div>
+                    }
+                    else if (!view.HasSubmittedAllIn)
+                    {
+                        <p class="muted">你没有宝石，跳过全下。</p>
+                    }
+                    else
+                    {
+                        <p class="muted">等待其他玩家提交全下…</p>
+                    }
+                </section>
+            }
+
+            <!-- Hand -->
+            @if (!view.IsFinished && (view.MyGems.Count > 0 || view.MyArcana.Count > 0 || view.CanSubmitOffer || view.CanPlayArcana || view.CanRaiseAuction))
+            {
+                <section class="panel">
+                    <h2>你的手牌</h2>
+
+                    <h3 class="subhead">宝石</h3>
+                    <div class="hand-row">
+                        @foreach (var g in view.MyGems)
+                        {
+                            var sel = _selectedGems.Contains(g.InstanceId);
+                            var gemClickable = view.Phase is "Prep_Offer" or "OfferingDay_Trade" or "Recovery_Auction"
+                                || (view.ActiveArcana?.Kind == "Peek" && view.ActiveArcana.CanRespond)
+                                || (view.ActiveArcana?.Kind == "Transplant" && view.ActiveArcana.IsActor);
+                            <button type="button"
+                                    class="card gem @(sel ? "selected" : null)"
+                                    disabled="@(!gemClickable)"
+                                    @onclick="() => ToggleGem(g.InstanceId)">
+                                @g.DisplayName
+                            </button>
+                        }
+                        @if (view.MyGems.Count == 0)
+                        {
+                            <span class="muted">（无宝石）</span>
+                        }
+                    </div>
+
+                    <h3 class="subhead">秘术</h3>
+                    <div class="hand-row">
+                        @foreach (var a in view.MyArcana)
+                        {
+                            var selArc = _selectedArcanaId == a.InstanceId;
+                            <button type="button"
+                                    class="card arcana @(selArc ? "selected" : null)"
+                                    disabled="@(!view.CanPlayArcana)"
+                                    @onclick="() => SelectArcana(a)">
+                                @a.DisplayName
+                            </button>
+                        }
+                        @if (view.MyArcana.Count == 0)
+                        {
+                            <span class="muted">（无秘术）</span>
+                        }
+                    </div>
+
+                    @if (view.Phase == "Prep_Offer")
+                    {
+                        <h3 class="subhead">供奉</h3>
+                        <div class="offer-editor">
+                            <div class="rank-picks">
+                                <span class="muted">序号：</span>
+                                @foreach (var r in view.AvailableRanks)
+                                {
+                                    <button type="button"
+                                            class="chip @(_selectedRank == r ? "selected" : null)"
+                                            @onclick="() => _selectedRank = r">
+                                        @r
+                                    </button>
+                                }
+                            </div>
+                            <div class="muted small">
+                                已选宝石 @_selectedGems.Count 张
+                                @if (view.MyOffer is not null)
+                                {
+                                    <span> · 当前已提交：序号 @view.MyOffer.Rank，@view.MyOffer.GemCount 张（sum=@view.MyOffer.Sum）</span>
+                                }
+                            </div>
+                            <div class="action-bar compact">
+                                <button class="btn btn-primary" disabled="@_busy" @onclick="SubmitOfferAsync">提交供奉</button>
+                                <button class="btn btn-ghost" disabled="@_busy" @onclick="ClearOfferAsync">撤回供奉</button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (view.Phase == "Prep_ArcanaTurn" && view.CanPlayArcana)
+                    {
+                        <h3 class="subhead">秘术行动</h3>
+                        <p class="muted small">
+                            目标提示：槽位类点祭坛；玩家类点玩家卡；恶意置换还要点对方祭品；通灵术/精神干扰需选序号；人工选育/黑风/渔网等无目标。
+                        </p>
+                        <div class="rank-picks">
+                            <span class="muted">可选序号：</span>
+                            @foreach (var r in view.AvailableRanks)
+                            {
+                                <button type="button"
+                                        class="chip @(_arcanaRank == r ? "selected" : null)"
+                                        @onclick="() => _arcanaRank = r">@r</button>
+                            }
+                        </div>
+                        <div class="muted small">
+                            已选槽位：@string.Join(", ", _selectedSlots.Select(s => s + 1)) ·
+                            玩家：@_selectedPlayerIds.Count · 祭品：@(_selectedRelicId ?? "无")
+                        </div>
+                        <div class="action-bar compact">
+                            <button class="btn btn-primary"
+                                    disabled="@(_busy || string.IsNullOrEmpty(_selectedArcanaKind))"
+                                    @onclick="PlayArcanaAsync">
+                                打出选中秘术
+                            </button>
+                            <button class="btn btn-ghost" disabled="@_busy" @onclick="PassArcanaAsync">跳过</button>
+                            <button class="btn btn-link" type="button" @onclick="ClearTargetSelection">清除目标</button>
+                        </div>
+                    }
+                    else if (view.Phase == "Prep_ArcanaTurn" && view.ActiveArcana is null)
+                    {
+                        <p class="muted">等待其他玩家的秘术行动…</p>
+                    }
+                </section>
+            }
+
+            @RenderLogPanel(view)
+
+            <div class="action-bar">
+                <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步</button>
+                <span class="muted small">牌堆：宝石 @view.GemDeckCount · 秘术 @view.ArcanaDeckCount · 祭品 @view.RelicDeckCount</span>
+                <a class="btn btn-link" href="/">离开（回首页）</a>
+            </div>
+        }
+        else
+        {
+            @* Finished: show players + log for review *@
+            <section class="panel">
+                <h2>玩家持有（终局）</h2>
+                <div class="opponents-row">
+                    @foreach (var p in view.Players)
+                    {
+                        <div class="player-card @(p.IsSelf ? "self" : null)">
+                            <div class="player-name">
+                                @p.Name
+                                @if (p.IsSelf)
+                                {
+                                    <span class="badge self-badge">你</span>
+                                }
+                            </div>
+                            <div class="player-relics">
+                                @if (p.Relics.Count == 0)
+                                {
+                                    <span class="muted">无祭品</span>
+                                }
+                                else
+                                {
+                                    @foreach (var r in p.Relics)
+                                    {
+                                        <span class="relic-chip @(r.TradedSuccessfully ? "traded" : null)">@r.DisplayName</span>
+                                    }
+                                }
+                            </div>
+                            @if (p.VirtualForbiddenKnowledge > 0)
+                            {
+                                <div class="muted small">虚禁 @p.VirtualForbiddenKnowledge</div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            @RenderLogPanel(view)
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string Code { get; set; } = "";
+
+    private string _displayCode = "";
+    private string _rejoinName = "";
+    private string? _error;
+    private bool _loading = true;
+    private bool _busy;
+
+    private string? _toastText;
+    private int _seenToastSeq;
+    private CancellationTokenSource? _toastCts;
+    private string _debugSeedText = "";
+
+    private readonly HashSet<string> _selectedGems = new(StringComparer.OrdinalIgnoreCase);
+    private string _selectedRank = "I";
+    private string? _selectedArcanaId;
+    private string? _selectedArcanaKind;
+    private readonly List<int> _selectedSlots = new();
+    private readonly List<string> _selectedPlayerIds = new();
+    private string? _selectedRelicId;
+    private string? _tradeSellerId;
+    private string _arcanaRank = "I";
+    private string _stepRank = "I";
+    private readonly List<string> _stepCardIds = new();
+
+    private static string TradePhaseLabel(string sub) => sub switch
+    {
+        "AwaitSellerResponse" => "等待卖家回应",
+        "AwaitBuyerChoice" => "买家抉择",
+        "ForceBuyBids" => "强买暗价",
+        _ => sub,
+    };
+
+    private RenderFragment RenderLogPanel(RoomView view) => __builder =>
+    {
+        <section class="panel log-panel">
+            <div class="log-header">
+                <h2>事件日志</h2>
+                <span class="muted small">最近 @view.Log.Count 条 · 新在上</span>
+            </div>
+            <ul class="log-list">
+                @if (view.Log.Count == 0)
+                {
+                    <li class="muted empty-hint">（暂无事件）</li>
+                }
+                else
+                {
+                    @foreach (var e in view.Log.Reverse())
+                    {
+                        var cls = e.Highlight ? $"log-item highlight log-{e.Level}" : "log-item";
+                        <li class="@cls" title="@e.Code">
+                            <span class="log-time">@e.Timestamp</span>
+                            @if (e.Highlight)
+                            {
+                                <span class="log-dot"></span>
+                            }
+                            <span class="log-msg">@e.Message</span>
+                        </li>
+                    }
+                }
+            </ul>
+        </section>
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _displayCode = (Code ?? "").Trim().ToUpperInvariant();
+        Game.OnChange += OnGameChanged;
+
+        try
+        {
+            await Game.EnsureConnectedAsync();
+
+            if (Game.CurrentView is not null &&
+                string.Equals(Game.CurrentView.RoomCode, _displayCode, StringComparison.OrdinalIgnoreCase))
+            {
+                await Game.SyncAsync();
+            }
+            else if (Game.CurrentView is null)
+            {
+                await Game.SyncAsync();
+            }
+
+            CaptureToastFromGame();
+        }
+        catch (Exception ex)
+        {
+            _error = $"连接失败：{ex.Message}";
+            ShowLocalToast(ex.Message);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OnGameChanged()
+    {
+        var v = Game.CurrentView;
+        if (v is not null && v.Phase != "Prep_Offer" && v.Phase != "OfferingDay_Trade"
+            && v.Phase != "Recovery_Auction"
+            && v.ActiveArcana?.Kind != "Peek")
+        {
+            // keep gem selection for force-buy / trade / auction
+            if (v.Trade is null || v.Trade.SubPhase != "ForceBuyBids")
+            {
+                if (v.Phase != "OfferingDay_Trade")
+                    _selectedGems.Clear();
+            }
+        }
+        if (v is not null && v.Phase != "Prep_ArcanaTurn")
+        {
+            _selectedArcanaId = null;
+            _selectedArcanaKind = null;
+            if (v.ActiveArcana is null)
+            {
+                _selectedSlots.Clear();
+                _selectedPlayerIds.Clear();
+            }
+        }
+        if (v?.ActiveArcana is null)
+            _stepCardIds.Clear();
+
+        CaptureToastFromGame();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void CaptureToastFromGame()
+    {
+        if (Game.ToastSeq == _seenToastSeq)
+            return;
+        if (string.IsNullOrEmpty(Game.LastError))
+        {
+            _seenToastSeq = Game.ToastSeq;
+            return;
+        }
+
+        _seenToastSeq = Game.ToastSeq;
+        _toastText = Game.LastError;
+        ScheduleToastDismiss();
+    }
+
+    private void ShowLocalToast(string message)
+    {
+        _toastText = message;
+        ScheduleToastDismiss();
+    }
+
+    private void ScheduleToastDismiss()
+    {
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        _toastCts = new CancellationTokenSource();
+        var token = _toastCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(6000, token);
+                await InvokeAsync(() =>
+                {
+                    if (!token.IsCancellationRequested)
+                        DismissToast();
+                });
+            }
+            catch (TaskCanceledException) { /* ignore */ }
+        }, token);
+    }
+
+    private void DismissToast()
+    {
+        _toastText = null;
+        Game.DismissError();
+        _toastCts?.Cancel();
+    }
+
+    private void ToggleGem(string id)
+    {
+        if (_selectedGems.Contains(id))
+        {
+            _selectedGems.Remove(id);
+            return;
+        }
+
+        // Offering-day trade display piles are capped at MaxTradeDisplayGems.
+        if (Game.CurrentView?.Phase is "OfferingDay_Trade"
+            && _selectedGems.Count >= GameRules.MaxTradeDisplayGems)
+        {
+            _error = $"交易展示宝石最多 {GameRules.MaxTradeDisplayGems} 张";
+            return;
+        }
+
+        _selectedGems.Add(id);
+    }
+
+    private void ToggleSlot(int index)
+    {
+        if (_selectedSlots.Contains(index))
+            _selectedSlots.Remove(index);
+        else
+            _selectedSlots.Add(index);
+    }
+
+    private void TogglePlayer(string playerId)
+    {
+        if (_selectedPlayerIds.Contains(playerId))
+            _selectedPlayerIds.Remove(playerId);
+        else
+            _selectedPlayerIds.Add(playerId);
+    }
+
+    private void ToggleStepCard(string id)
+    {
+        if (_stepCardIds.Contains(id))
+            _stepCardIds.Remove(id);
+        else
+            _stepCardIds.Add(id);
+    }
+
+    private void SelectTradeRelic(string sellerId, RelicItemView r)
+    {
+        if (r.TradedSuccessfully)
+            return;
+        if (_selectedRelicId == r.InstanceId && _tradeSellerId == sellerId)
+        {
+            _selectedRelicId = null;
+            _tradeSellerId = null;
+        }
+        else
+        {
+            _selectedRelicId = r.InstanceId;
+            _tradeSellerId = sellerId;
+        }
+    }
+
+    private void ClearTargetSelection()
+    {
+        _selectedSlots.Clear();
+        _selectedPlayerIds.Clear();
+        _selectedRelicId = null;
+        _tradeSellerId = null;
+    }
+
+    private void SelectArcana(CardView a)
+    {
+        if (_selectedArcanaId == a.InstanceId)
+        {
+            _selectedArcanaId = null;
+            _selectedArcanaKind = null;
+        }
+        else
+        {
+            _selectedArcanaId = a.InstanceId;
+            _selectedArcanaKind = a.Kind;
+        }
+    }
+
+    private async Task StartAsync()
+    {
+        await RunAsync(async () =>
+        {
+            int? seed = null;
+            if (!string.IsNullOrWhiteSpace(_debugSeedText)
+                && int.TryParse(_debugSeedText.Trim(), out var s))
+            {
+                seed = s;
+            }
+            else if (!string.IsNullOrWhiteSpace(_debugSeedText))
+            {
+                _error = "调试种子须为整数";
+                ShowLocalToast("[InvalidTarget] 调试种子须为整数");
+                return CommandResultFail();
+            }
+
+            return await Game.StartGameAsync(seed);
+        });
+    }
+
+    private async Task SubmitOfferAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (string.IsNullOrEmpty(_selectedRank))
+            {
+                _error = "请选择序号";
+                return CommandResultFail();
+            }
+            if (_selectedGems.Count == 0)
+            {
+                _error = "请至少选择 1 张宝石";
+                return CommandResultFail();
+            }
+            var result = await Game.SubmitOfferAsync(_selectedRank, _selectedGems.ToList());
+            if (result.Ok) _selectedGems.Clear();
+            return result;
+        });
+    }
+
+    private async Task ClearOfferAsync() => await RunAsync(() => Game.ClearOfferAsync());
+    private async Task PassArcanaAsync() => await RunAsync(() => Game.PassArcanaAsync());
+
+    private async Task PlayArcanaAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (string.IsNullOrEmpty(_selectedArcanaKind))
+            {
+                _error = "请先选择一张秘术";
+                return CommandResultFail();
+            }
+
+            var slots = _selectedSlots.Count > 0 ? _selectedSlots.ToArray() : null;
+            var players = _selectedPlayerIds.Count > 0 ? _selectedPlayerIds.ToArray() : null;
+            string[]? cards = null;
+            string? rank = null;
+
+            
+            switch (_selectedArcanaKind)
+            {
+                // MaliciousSwap needs relic card id
+                case "MaliciousSwap" when !string.IsNullOrEmpty(_selectedRelicId):
+                    cards = [_selectedRelicId];
+                    break;
+                case "Spiritism" or "MentalInterference":
+                    rank = _arcanaRank;
+                    break;
+            }
+
+            var result = await Game.PlayArcanaAsync(_selectedArcanaKind, slots, players, cards, rank);
+            if (!result.Ok) return result;
+            _selectedArcanaId = null;
+            _selectedArcanaKind = null;
+            ClearTargetSelection();
+            return result;
+        });
+    }
+
+    private async Task PeekReOfferAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (_selectedGems.Count == 0)
+            {
+                _error = "请选择宝石";
+                return CommandResultFail();
+            }
+            var result = await Game.ArcanaStepResponseAsync(
+                "ReOffer",
+                rank: _stepRank,
+                targetCardIds: [.. _selectedGems]);
+            if (result.Ok) _selectedGems.Clear();
+            return result;
+        });
+    }
+
+    private async Task PeekDoneAsync() =>
+        await RunAsync(() => Game.ArcanaStepResponseAsync("Done"));
+
+    private async Task BreedKeepAsync()
+    {
+        await RunAsync(async () =>
+        {
+            var result = await Game.ArcanaStepResponseAsync(
+                "Keep", targetCardIds: [.. _stepCardIds]);
+            if (result.Ok) _stepCardIds.Clear();
+            return result;
+        });
+    }
+
+    private async Task TransplantReturnAsync()
+    {
+        await RunAsync(async () =>
+        {
+            var result = await Game.ArcanaStepResponseAsync(
+                "Return", targetCardIds: [.. _stepCardIds]);
+            if (result.Ok) _stepCardIds.Clear();
+            return result;
+        });
+    }
+
+    private async Task PassTradeAsync() => await RunAsync(() => Game.PassTradeAsync());
+
+    private async Task ProposeTradeAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (string.IsNullOrEmpty(_tradeSellerId) || string.IsNullOrEmpty(_selectedRelicId))
+            {
+                _error = "请选择卖家祭品";
+                return CommandResultFail();
+            }
+            if (_selectedGems.Count == 0)
+            {
+                _error = "请至少出价 1 张宝石";
+                return CommandResultFail();
+            }
+            if (_selectedGems.Count > GameRules.MaxTradeDisplayGems)
+            {
+                _error = $"出价宝石张数不能超过 {GameRules.MaxTradeDisplayGems}";
+                return CommandResultFail();
+            }
+            var result = await Game.ProposeTradeAsync(
+                _tradeSellerId, _selectedRelicId, _selectedGems.ToList());
+            if (result.Ok)
+            {
+                _selectedGems.Clear();
+                _selectedRelicId = null;
+                _tradeSellerId = null;
+            }
+            return result;
+        });
+    }
+
+    private async Task RespondTradeAsync(bool accept) =>
+        await RunAsync(() => Game.RespondTradeAsync(accept));
+
+    private async Task CancelTradeAsync() => await RunAsync(() => Game.CancelTradeAsync());
+
+    private async Task BeginForceBuyAsync() =>
+        await RunAsync(async () =>
+        {
+            if (_selectedGems.Count > GameRules.MaxTradeDisplayGems)
+            {
+                _error = $"强买出价宝石张数不能超过 {GameRules.MaxTradeDisplayGems}";
+                return CommandResultFail();
+            }
+            return await Game.BeginForceBuyAsync(_selectedGems.Count > 0 ? _selectedGems.ToList() : null);
+        });
+
+    private async Task CommitForceBidAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (_selectedGems.Count > GameRules.MaxTradeDisplayGems)
+            {
+                _error = $"展示宝石张数不能超过 {GameRules.MaxTradeDisplayGems}";
+                return CommandResultFail();
+            }
+            var result = await Game.CommitForceBuyBidAsync(_selectedGems.ToList());
+            if (result.Ok) _selectedGems.Clear();
+            return result;
+        });
+    }
+
+    private async Task VoteAsync(bool yes) => await RunAsync(() => Game.CastVoteAsync(yes));
+
+    private async Task RaiseAuctionAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (_selectedGems.Count == 0)
+            {
+                _error = "请至少选择 1 张宝石加价";
+                return CommandResultFail();
+            }
+            var result = await Game.RaiseAuctionAsync(_selectedGems.ToList());
+            if (result.Ok) _selectedGems.Clear();
+            return result;
+        });
+    }
+
+    private async Task PassAuctionAsync() => await RunAsync(() => Game.PassAuctionAsync());
+
+    private async Task SubmitAllInAsync()
+    {
+        await RunAsync(async () =>
+        {
+            if (!string.IsNullOrEmpty(_selectedRank))
+                return await Game.SubmitAllInOfferAsync(_selectedRank);
+            _error = "请选择序号";
+            return CommandResultFail();
+        });
+    }
+
+    private async Task SyncAsync()
+    {
+        _busy = true;
+        try { await Game.SyncAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task RejoinAsync()
+    {
+        await RunAsync(async () => await Game.JoinRoomAsync(_displayCode, _rejoinName));
+    }
+
+    private async Task RunAsync(Func<Task<CommandResult>> action)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await action();
+            if (!result.Ok)
+            {
+                // GameClientService already sets Toast; also capture client-side validation errors.
+                CaptureToastFromGame();
+                if (string.IsNullOrEmpty(_toastText))
+                {
+                    if (!string.IsNullOrEmpty(Game.LastError))
+                    {
+                        // already applied via CaptureToastFromGame when seq advanced
+                    }
+                    else if (!string.IsNullOrEmpty(_error))
+                    {
+                        ShowLocalToast(_error);
+                    }
+                    else
+                    {
+                        var text = string.IsNullOrEmpty(result.ErrorCode)
+                            ? (result.Message ?? "操作失败")
+                            : $"[{result.ErrorCode}] {result.Message}";
+                        ShowLocalToast(text);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            ShowLocalToast(ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static CommandResult CommandResultFail() =>
+        new() { Ok = false, Message = "客户端校验失败" };
+
+    public void Dispose()
+    {
+        Game.OnChange -= OnGameChanged;
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+    }
+}

@@ -1,0 +1,116 @@
+@page "/"
+@inject GameClientService Game
+@inject NavigationManager Nav
+
+<PageTitle>克苏鲁之约</PageTitle>
+
+<div class="lobby-page">
+    <header class="lobby-hero">
+        <h1 class="title">克苏鲁之约</h1>
+        <p class="subtitle">多人浏览器桌游 · 筹备 / 供奉 / 复苏 · M4</p>
+    </header>
+
+    <div class="lobby-cards">
+        <section class="panel">
+            <h2>创建房间</h2>
+            <label class="field">
+                <span>你的昵称</span>
+                <input @bind="_createName" maxlength="16" placeholder="1–16 字" disabled="@_busy" />
+            </label>
+            <button class="btn btn-primary" disabled="@_busy" @onclick="CreateAsync">创建房间</button>
+        </section>
+
+        <section class="panel">
+            <h2>加入房间</h2>
+            <label class="field">
+                <span>房间码</span>
+                <input @bind="_joinCode" maxlength="8" placeholder="6 位房间码" class="code-input" disabled="@_busy" />
+            </label>
+            <label class="field">
+                <span>你的昵称</span>
+                <input @bind="_joinName" maxlength="16" placeholder="1–16 字" disabled="@_busy" />
+            </label>
+            <button class="btn btn-secondary" disabled="@_busy" @onclick="JoinAsync">加入房间</button>
+        </section>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="alert alert-error" role="alert">@_error</div>
+    }
+
+    <p class="muted small lobby-foot">
+        提示：3–8 人同房可玩完整流程。Development 下房主可在开局时设置固定 RNG 种子。
+    </p>
+</div>
+
+@code {
+    private string _createName = "";
+    private string _joinName = "";
+    private string _joinCode = "";
+    private string? _error;
+    private bool _busy;
+
+    private static string FormatFail(CommandResult result) =>
+        string.IsNullOrEmpty(result.ErrorCode)
+            ? (result.Message ?? "操作失败")
+            : $"[{result.ErrorCode}] {result.Message ?? "操作失败"}";
+
+    private async Task CreateAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Game.CreateRoomAsync(_createName);
+            if (!result.Ok)
+            {
+                _error = FormatFail(result);
+                return;
+            }
+
+            var code = result.Data?["roomCode"];
+            if (string.IsNullOrEmpty(code))
+            {
+                _error = "服务器未返回房间码";
+                return;
+            }
+
+            Nav.NavigateTo($"/room/{code}");
+        }
+        catch (Exception ex)
+        {
+            _error = $"连接失败：{ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task JoinAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Game.JoinRoomAsync(_joinCode, _joinName);
+            if (!result.Ok)
+            {
+                _error = FormatFail(result);
+                return;
+            }
+
+            var code = result.Data?["roomCode"] ?? _joinCode.Trim().ToUpperInvariant();
+            Nav.NavigateTo($"/room/{code}");
+        }
+        catch (Exception ex)
+        {
+            _error = $"连接失败：{ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
