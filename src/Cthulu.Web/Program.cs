@@ -11,6 +11,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.Configure<Microsoft.AspNetCore.Components.Server.CircuitOptions>(options =>
+    {
+        options.DetailedErrors = true;
+    });
+}
+
 builder.Services.AddSignalR();
 
 builder.Services.Configure<GameOptions>(builder.Configuration.GetSection(GameOptions.SectionName));
