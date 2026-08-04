@@ -1,3 +1,4 @@
+using Cthulu.Domain.Ids;
 using Cthulu.Domain.Random;
 
 namespace Cthulu.Domain.Cards;
@@ -50,6 +51,40 @@ public sealed class Deck
     public bool TryTakeGem(GemValue value, out CardInstance? card)
     {
         card = FindGem(value);
+        if (card is null)
+            return false;
+        _cards.Remove(card);
+        return true;
+    }
+
+    public CardInstance? FindArcana(ArcanaKind kind) =>
+        _cards.FirstOrDefault(c => c.Def.Type == CardType.Arcana && c.Def.ArcanaKind == kind);
+
+    public bool TryTakeArcana(ArcanaKind kind, out CardInstance? card)
+    {
+        card = FindArcana(kind);
+        if (card is null)
+            return false;
+        _cards.Remove(card);
+        return true;
+    }
+
+    public CardInstance? FindRelic(RelicKind kind) =>
+        _cards.FirstOrDefault(c => c.Def.Type == CardType.Relic && c.Def.RelicKind == kind);
+
+    public bool TryTakeRelic(RelicKind kind, out CardInstance? card)
+    {
+        card = FindRelic(kind);
+        if (card is null)
+            return false;
+        _cards.Remove(card);
+        return true;
+    }
+
+    /// <summary>Remove a specific instance from the pile (e.g. creative return).</summary>
+    public bool TryTakeById(CardInstanceId id, out CardInstance? card)
+    {
+        card = _cards.FirstOrDefault(c => c.Id.Equals(id));
         if (card is null)
             return false;
         _cards.Remove(card);

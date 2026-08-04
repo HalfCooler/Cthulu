@@ -67,6 +67,10 @@
                 <div>
                     <span class="label">阶段</span>
                     @view.PhaseDisplayName
+                    @if (view.IsCreativeMode)
+                    {
+                        <span class="badge creative-badge">创造模式</span>
+                    }
                     @if (finished)
                     {
                         <span class="badge finished-badge">对局结束</span>
@@ -194,10 +198,14 @@
                                         {
                                             <span class="badge">房主</span>
                                         }
+                                        @if (p.IsBot)
+                                        {
+                                            <span class="badge bot-badge">人机</span>
+                                        }
                                     </td>
                                     <td>
                                         <span class="dot @(p.IsConnected ? "on" : "off")"></span>
-                                        @(p.IsConnected ? "在线" : "离线")
+                                        @(p.IsBot ? "人机" : (p.IsConnected ? "在线" : "离线"))
                                     </td>
                                     <td>@(p.IsSelf ? "（你）" : "")</td>
                                 </tr>
@@ -227,18 +235,28 @@
                             @onclick="StartAsync">
                         开始游戏
                     </button>
-                    @if (!view.CanStart)
+                    <button class="btn btn-accent"
+                            disabled="@(!view.CanStartCreative || _busy)"
+                            title="独自开局：1 真人 + 3 人机；可自由从牌库取还宝石/秘术/祭品"
+                            @onclick="StartCreativeAsync">
+                        创造模式
+                    </button>
+                    @if (!view.CanStart && !view.CanStartCreative)
                     {
                         <span class="muted">
                             @if (view.PlayerCount < view.MinPlayers)
                             {
-                                <text>至少 @view.MinPlayers 人才能开始（当前 @view.PlayerCount）</text>
+                                <text>至少 @view.MinPlayers 人才能开始标准局（当前 @view.PlayerCount）</text>
                             }
                             else
                             {
                                 <text>无法开始</text>
                             }
                         </span>
+                    }
+                    else if (!view.CanStart && view.CanStartCreative)
+                    {
+                        <span class="muted">标准局需 @view.MinPlayers 人；可点「创造模式」单人练习</span>
                     }
                 }
                 else
@@ -311,6 +329,10 @@
                                 {
                                     <span class="badge">庄</span>
                                 }
+                                @if (p.IsBot)
+                                {
+                                    <span class="badge bot-badge">人机</span>
+                                }
                                 @if (p.IsSelf)
                                 {
                                     <span class="badge self-badge">你</span>
@@ -350,6 +372,15 @@
                                                 @onclick="() => SelectTradeRelic(p.PlayerId, r)">
                                             @r.DisplayName
                                         </button>
+                                        @if (view.IsCreativeMode && p.IsSelf && !view.IsFinished)
+                                        {
+                                            <button type="button"
+                                                    class="btn-mini danger"
+                                                    title="归还牌库"
+                                                    disabled="@_busy"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="() => CreativeRemoveRelicAsync(r.InstanceId)">×</button>
+                                        }
                                     }
                                 </div>
                             }
@@ -672,9 +703,77 @@
                 </section>
             }
 
+            <!-- Creative mode: take from decks -->
+            @if (view.IsCreativeMode && !view.IsFinished && view.CreativeDeck is not null)
+            {
+                <section class="panel creative-panel">
+                    <h2>创造模式 · 从牌库取牌</h2>
+                    <p class="muted small">
+                        只能从牌库中挑选；点「+」加入你的手牌/祭品，点手牌上的「×」归还牌库。
+                        假人会自动跳过，必须选择时取选项列表前若干项。
+                    </p>
+
+                    <h3 class="subhead">宝石牌库（@view.GemDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Gems)
+                        {
+                            <button type="button"
+                                    class="stock-chip gem"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    title="@s.Description"
+                                    @onclick="() => CreativeAddGemAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Gems.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+
+                    <h3 class="subhead">秘术牌库（@view.ArcanaDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Arcana)
+                        {
+                            <button type="button"
+                                    class="stock-chip arcana has-tip"
+                                    data-tip="@s.Description"
+                                    title="@s.Description"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    @onclick="() => CreativeAddArcanaAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Arcana.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+
+                    <h3 class="subhead">祭品牌库（@view.RelicDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Relics)
+                        {
+                            <button type="button"
+                                    class="stock-chip relic has-tip"
+                                    data-tip="@s.Description"
+                                    title="@s.Description"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    @onclick="() => CreativeAddRelicAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Relics.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+                </section>
+            }
+
             <!-- Hand -->
             @if (!view.IsFinished && (view.MyGems.Count > 0 || view.MyArcana.Count > 0 || view.MyOffer is not null
-                || view.CanSubmitOffer || view.CanPlayArcana || view.CanRaiseAuction))
+                || view.CanSubmitOffer || view.CanPlayArcana || view.CanRaiseAuction || view.IsCreativeMode))
             {
                 <section class="panel">
                     <h2>你的手牌</h2>
@@ -690,14 +789,24 @@
                             var gemClickable = view.Phase is "Prep_Offer" or "OfferingDay_Trade" or "Recovery_Auction"
                                 || peekReOfferSelect
                                 || (view.ActiveArcana?.Kind == "Transplant" && view.ActiveArcana.IsActor);
-                            <button type="button"
-                                    class="card gem has-tip @(sel ? "selected" : null)"
-                                    data-tip="@g.Description"
-                                    title="@g.Description"
-                                    disabled="@(!gemClickable)"
-                                    @onclick="() => ToggleGem(g.InstanceId)">
-                                @g.DisplayName
-                            </button>
+                            <span class="card-wrap">
+                                <button type="button"
+                                        class="card gem has-tip @(sel ? "selected" : null)"
+                                        data-tip="@g.Description"
+                                        title="@g.Description"
+                                        disabled="@(!gemClickable)"
+                                        @onclick="() => ToggleGem(g.InstanceId)">
+                                    @g.DisplayName
+                                </button>
+                                @if (view.IsCreativeMode)
+                                {
+                                    <button type="button"
+                                            class="btn-mini danger"
+                                            title="归还牌库"
+                                            disabled="@_busy"
+                                            @onclick="() => CreativeRemoveGemAsync(g.InstanceId)">×</button>
+                                }
+                            </span>
                         }
                         @if (view.MyGems.Count == 0)
                         {
@@ -710,14 +819,24 @@
                         @foreach (var a in view.MyArcana)
                         {
                             var selArc = _selectedArcanaId == a.InstanceId;
-                            <button type="button"
-                                    class="card arcana has-tip @(selArc ? "selected" : null)"
-                                    data-tip="@a.Description"
-                                    title="@a.Description"
-                                    disabled="@(!view.CanPlayArcana)"
-                                    @onclick="() => SelectArcana(a)">
-                                @a.DisplayName
-                            </button>
+                            <span class="card-wrap">
+                                <button type="button"
+                                        class="card arcana has-tip @(selArc ? "selected" : null)"
+                                        data-tip="@a.Description"
+                                        title="@a.Description"
+                                        disabled="@(!view.CanPlayArcana)"
+                                        @onclick="() => SelectArcana(a)">
+                                    @a.DisplayName
+                                </button>
+                                @if (view.IsCreativeMode)
+                                {
+                                    <button type="button"
+                                            class="btn-mini danger"
+                                            title="归还牌库"
+                                            disabled="@_busy"
+                                            @onclick="() => CreativeRemoveArcanaAsync(a.InstanceId)">×</button>
+                                }
+                            </span>
                         }
                         @if (view.MyArcana.Count == 0)
                         {
@@ -1391,6 +1510,45 @@
             return await Game.StartGameAsync(seed);
         });
     }
+
+    private async Task StartCreativeAsync()
+    {
+        await RunAsync(async () =>
+        {
+            int? seed = null;
+            if (!string.IsNullOrWhiteSpace(_debugSeedText)
+                && int.TryParse(_debugSeedText.Trim(), out var s))
+            {
+                seed = s;
+            }
+            else if (!string.IsNullOrWhiteSpace(_debugSeedText))
+            {
+                _error = "调试种子须为整数";
+                ShowLocalToast("[InvalidTarget] 调试种子须为整数");
+                return CommandResultFail();
+            }
+
+            return await Game.StartCreativeModeAsync(seed);
+        });
+    }
+
+    private async Task CreativeAddGemAsync(string kind) =>
+        await RunAsync(() => Game.CreativeAddGemAsync(kind));
+
+    private async Task CreativeRemoveGemAsync(string instanceId) =>
+        await RunAsync(() => Game.CreativeRemoveGemAsync(instanceId));
+
+    private async Task CreativeAddArcanaAsync(string kind) =>
+        await RunAsync(() => Game.CreativeAddArcanaAsync(kind));
+
+    private async Task CreativeRemoveArcanaAsync(string instanceId) =>
+        await RunAsync(() => Game.CreativeRemoveArcanaAsync(instanceId));
+
+    private async Task CreativeAddRelicAsync(string kind) =>
+        await RunAsync(() => Game.CreativeAddRelicAsync(kind));
+
+    private async Task CreativeRemoveRelicAsync(string instanceId) =>
+        await RunAsync(() => Game.CreativeRemoveRelicAsync(instanceId));
 
     private async Task SubmitOfferAsync()
     {

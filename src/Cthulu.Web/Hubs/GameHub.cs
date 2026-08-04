@@ -35,6 +35,62 @@ public sealed class GameHub(RoomService rooms, ILogger<GameHub> logger) : Hub
         return result;
     }
 
+    public async Task<CommandResult> StartCreativeMode(int? debugSeed = null)
+    {
+        var result = rooms.StartCreativeMode(Context.ConnectionId, debugSeed);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeAddGem(string gemValue)
+    {
+        var result = rooms.CreativeAddGem(Context.ConnectionId, gemValue);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeRemoveGem(string instanceId)
+    {
+        var result = rooms.CreativeRemoveGem(Context.ConnectionId, instanceId);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeAddArcana(string arcanaKind)
+    {
+        var result = rooms.CreativeAddArcana(Context.ConnectionId, arcanaKind);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeRemoveArcana(string instanceId)
+    {
+        var result = rooms.CreativeRemoveArcana(Context.ConnectionId, instanceId);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeAddRelic(string relicKind)
+    {
+        var result = rooms.CreativeAddRelic(Context.ConnectionId, relicKind);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> CreativeRemoveRelic(string instanceId)
+    {
+        var result = rooms.CreativeRemoveRelic(Context.ConnectionId, instanceId);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
     public async Task<CommandResult> SubmitOffer(string rank, string[] gemInstanceIds)
     {
         var result = rooms.SubmitOffer(Context.ConnectionId, rank, gemInstanceIds);

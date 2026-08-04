@@ -8,6 +8,10 @@ public sealed class PlayerState
     public PlayerId Id { get; }
     public string Name { get; }
     public int SeatIndex { get; }
+
+    /// <summary>True for AI seat fillers (creative mode dummies).</summary>
+    public bool IsBot { get; set; }
+
     public List<CardInstance> GemHand { get; } = new();
     public List<CardInstance> ArcanaHand { get; } = new();
     public List<CardInstance> Relics { get; } = new();

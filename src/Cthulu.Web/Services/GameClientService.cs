@@ -169,6 +169,55 @@ public sealed class GameClientService(NavigationManager nav, ILogger<GameClientS
         return Track(result);
     }
 
+    public async Task<CommandResult> StartCreativeModeAsync(int? debugSeed = null)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("StartCreativeMode", debugSeed);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeAddGemAsync(string gemValue)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeAddGem", gemValue);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeRemoveGemAsync(string instanceId)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeRemoveGem", instanceId);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeAddArcanaAsync(string arcanaKind)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeAddArcana", arcanaKind);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeRemoveArcanaAsync(string instanceId)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeRemoveArcana", instanceId);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeAddRelicAsync(string relicKind)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeAddRelic", relicKind);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> CreativeRemoveRelicAsync(string instanceId)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("CreativeRemoveRelic", instanceId);
+        return Track(result);
+    }
+
     public async Task<CommandResult> SubmitOfferAsync(string rank, IReadOnlyList<string> gemInstanceIds)
     {
         await EnsureConnectedAsync();

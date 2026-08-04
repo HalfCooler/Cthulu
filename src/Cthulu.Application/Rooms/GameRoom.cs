@@ -13,6 +13,9 @@ public sealed class GameRoom
     public List<RoomPlayer> Players { get; } = new();
     public PlayerId HostId { get; private set; }
 
+    /// <summary>Lobby / match mode; set when the host starts the game.</summary>
+    public GameMode Mode { get; set; } = GameMode.Standard;
+
     /// <summary>Null until StartGame. Source of truth for in-game phase.</summary>
     public GameState? Game { get; set; }
 

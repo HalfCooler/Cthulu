@@ -49,21 +49,28 @@ public sealed class ViewProjector
                 IsConnected = p.IsConnected,
                 IsHost = p.IsHost,
                 IsSelf = p.Id.Equals(observerId),
+                IsBot = p.IsBot,
             })
             .ToList();
 
         var isHost = self?.IsHost ?? false;
+        var humanCount = room.Players.Count(p => !p.IsBot);
         var enough = room.Players.Count >= MinPlayers
                      && room.Players.Count <= MaxPlayers;
         var canStart = room.Phase == GamePhase.Lobby && enough && isHost;
+        var canStartCreative = room.Phase == GamePhase.Lobby && isHost && humanCount == 1;
 
         string hint;
-        if (room.Players.Count < MinPlayers)
-            hint = $"等待玩家加入（至少 {MinPlayers} 人才能开始，当前 {room.Players.Count}）";
+        if (humanCount < MinPlayers && !canStartCreative)
+            hint = $"等待玩家加入（至少 {MinPlayers} 人才能开始标准局，当前 {humanCount}；房主可单独开「创造模式」）";
+        else if (canStartCreative && !canStart)
+            hint = isHost
+                ? "可单独启动「创造模式」（1 真人 + 3 人机），或等待更多玩家开始标准局"
+                : "等待房主开始";
         else if (!isHost)
             hint = "人数已够，等待房主开始游戏";
         else
-            hint = "人数已够，可点击「开始游戏」";
+            hint = "人数已够，可点击「开始游戏」；或使用「创造模式」";
 
         return new RoomView
         {
@@ -77,7 +84,10 @@ public sealed class ViewProjector
             MinPlayers = MinPlayers,
             MaxPlayers = MaxPlayers,
             CanStart = canStart,
+            CanStartCreative = canStartCreative,
             AllowDebugSeed = isHost && _options.AllowDebugSeed,
+            GameMode = room.Mode.ToString(),
+            IsCreativeMode = room.Mode == GameMode.Creative,
             Players = players,
             Hint = hint,
             Log = Array.Empty<LogEntryView>(),
@@ -118,6 +128,7 @@ public sealed class ViewProjector
                     IsConnected = roomPlayer?.IsConnected ?? p.IsConnected,
                     IsHost = roomPlayer?.IsHost ?? false,
                     IsSelf = p.Id.Equals(observerId),
+                    IsBot = p.IsBot || (roomPlayer?.IsBot ?? false),
                     GemCount = p.GemHand.Count,
                     ArcanaCount = p.ArcanaHand.Count,
                     OfferGemCount = offer?.GemCount ?? 0,
@@ -249,6 +260,11 @@ public sealed class ViewProjector
                              && selfState is not null
                              && (selfState.GemHand.Count > 0 || hasOffer);
 
+        var isCreative = game.IsCreative;
+        CreativeDeckView? creativeDeck = null;
+        if (isCreative && !isFinished)
+            creativeDeck = ProjectCreativeDeck(game);
+
         return new RoomView
         {
             RoomCode = room.Code,
@@ -261,7 +277,10 @@ public sealed class ViewProjector
             MinPlayers = MinPlayers,
             MaxPlayers = MaxPlayers,
             CanStart = false,
+            CanStartCreative = false,
             AllowDebugSeed = false,
+            GameMode = game.Mode.ToString(),
+            IsCreativeMode = isCreative,
             Players = players,
             Hint = BuildHint(game, isMyTurn, hasOffer, isOfferPhase, selfState),
             PrepDayNumber = game.PrepDayNumber,
@@ -301,6 +320,50 @@ public sealed class ViewProjector
             CanSubmitAllIn = canSubmitAllIn && !isFinished,
             HasSubmittedAllIn = isAllInPhase && hasOffer,
             IsFinished = isFinished,
+            CreativeDeck = creativeDeck,
+        };
+    }
+
+    private static CreativeDeckView ProjectCreativeDeck(GameState game)
+    {
+        var gems = Enum.GetValues<GemValue>()
+            .Select(v => new DeckStockView
+            {
+                Kind = ((int)v).ToString(),
+                DisplayName = $"宝石 {(int)v}",
+                Count = game.GemDeck.Cards.Count(c => c.Def.GemValue == v),
+                Description = $"面值 {(int)v}",
+            })
+            .Where(s => s.Count > 0)
+            .ToList();
+
+        var arcana = Enum.GetValues<ArcanaKind>()
+            .Select(k => new DeckStockView
+            {
+                Kind = k.ToString(),
+                DisplayName = ArcanaName(k),
+                Count = game.ArcanaDeck.Cards.Count(c => c.Def.ArcanaKind == k),
+                Description = ArcanaDescription(k),
+            })
+            .Where(s => s.Count > 0)
+            .ToList();
+
+        var relics = Enum.GetValues<RelicKind>()
+            .Select(k => new DeckStockView
+            {
+                Kind = k.ToString(),
+                DisplayName = RelicName(k),
+                Count = game.RelicDeck.Cards.Count(c => c.Def.RelicKind == k),
+                Description = RelicDescription(k),
+            })
+            .Where(s => s.Count > 0)
+            .ToList();
+
+        return new CreativeDeckView
+        {
+            Gems = gems,
+            Arcana = arcana,
+            Relics = relics,
         };
     }
 
@@ -595,8 +658,9 @@ public sealed class ViewProjector
         "PrepResolveDone" or "RecoveryStart" or "CalendarContinue" or "CalendarFinalPrep" => (true, "warn"),
         "RelicWon" or "AuctionWon" or "TradeAccept" or "TradeForceSuccess" => (true, "success"),
         "RelicVoid" or "RelicTie" or "AuctionVoid" or "DeadPlayers" or "TradeForceFail" => (true, "danger"),
-        "VoteStart" or "VoteResult" or "DebugSeed" or "SeatOrder" => (true, "warn"),
+        "VoteStart" or "VoteResult" or "DebugSeed" or "SeatOrder" or "CreativeStart" => (true, "warn"),
         var c when c.StartsWith("Arcana_", StringComparison.Ordinal) => (true, "info"),
+        var c when c.StartsWith("Creative", StringComparison.Ordinal) => (true, "info"),
         _ => (false, "info"),
     };
 

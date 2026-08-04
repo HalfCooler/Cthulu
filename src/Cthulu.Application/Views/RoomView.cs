@@ -13,8 +13,13 @@ public sealed class RoomView
     public required int MinPlayers { get; init; }
     public required int MaxPlayers { get; init; }
     public required bool CanStart { get; init; }
+    /// <summary>Host alone in lobby may start creative mode (1 human + 3 bots).</summary>
+    public bool CanStartCreative { get; init; }
     /// <summary>True when host may open the debug seed field (Development config).</summary>
     public bool AllowDebugSeed { get; init; }
+    /// <summary>Standard or Creative (sandbox).</summary>
+    public string GameMode { get; init; } = "Standard";
+    public bool IsCreativeMode { get; init; }
     public required IReadOnlyList<PlayerPublicView> Players { get; init; }
     public string? Hint { get; init; }
 
@@ -65,6 +70,25 @@ public sealed class RoomView
     public bool CanSubmitAllIn { get; init; }
     public bool HasSubmittedAllIn { get; init; }
     public bool IsFinished { get; init; }
+
+    /// <summary>Creative mode: deck contents available to take into hand/relics.</summary>
+    public CreativeDeckView? CreativeDeck { get; init; }
+}
+
+/// <summary>Aggregated deck inventory for creative-mode take-from-deck UI.</summary>
+public sealed class CreativeDeckView
+{
+    public IReadOnlyList<DeckStockView> Gems { get; init; } = Array.Empty<DeckStockView>();
+    public IReadOnlyList<DeckStockView> Arcana { get; init; } = Array.Empty<DeckStockView>();
+    public IReadOnlyList<DeckStockView> Relics { get; init; } = Array.Empty<DeckStockView>();
+}
+
+public sealed class DeckStockView
+{
+    public required string Kind { get; init; }
+    public required string DisplayName { get; init; }
+    public int Count { get; init; }
+    public string Description { get; init; } = "";
 }
 
 public sealed class AuctionView
@@ -94,6 +118,7 @@ public sealed class PlayerPublicView
     public required bool IsConnected { get; init; }
     public required bool IsHost { get; init; }
     public required bool IsSelf { get; init; }
+    public bool IsBot { get; init; }
 
     public int GemCount { get; init; }
     public int ArcanaCount { get; init; }

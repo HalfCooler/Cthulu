@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Cthulu.Application.Bots;
 using Cthulu.Application.Commands;
 using Cthulu.Application.Views;
 using Cthulu.Domain.Cards;
@@ -81,6 +82,9 @@ public sealed class RoomService
             var existing = room.FindByName(name);
             if (existing is not null)
             {
+                if (existing.IsBot)
+                    return CommandResult.Fail(ErrorCodes.Unauthorized, "该昵称为人机席位，不可占用");
+
                 if (existing.IsConnected &&
                     !string.Equals(existing.ConnectionId, connectionId, StringComparison.Ordinal))
                 {
@@ -174,6 +178,9 @@ public sealed class RoomService
             var seats = ShuffleSeats(room.Players, rng);
 
             var state = PrepDayPipeline.CreateGame(seats, rng);
+            state.Mode = GameMode.Standard;
+            room.Mode = GameMode.Standard;
+            ApplyBotFlags(room, state);
             PrepDayPipeline.StartGame(state);
             state.Log(
                 "SeatOrder",
@@ -181,7 +188,156 @@ public sealed class RoomService
             if (appliedSeed is int s)
                 state.Log("DebugSeed", $"调试固定种子已启用：{s}");
             room.Game = state;
+            RunBots(room);
             return CommandResult.Success();
+        });
+    }
+
+    /// <summary>
+    /// Creative mode: host alone in lobby → spawn 3 bots → start 4-player sandbox game.
+    /// Human may freely take/return gems, arcana, and relics from decks.
+    /// </summary>
+    public CommandResult StartCreativeMode(string connectionId, int? debugSeed = null)
+    {
+        return WithPlayer(connectionId, (room, player) =>
+        {
+            if (room.Phase != GamePhase.Lobby || room.Game is not null)
+                return CommandResult.Fail(ErrorCodes.InvalidPhase, "当前阶段无法开始创造模式");
+
+            if (!player.IsHost)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "仅房主可开始创造模式");
+
+            var humans = room.Players.Where(p => !p.IsBot).ToList();
+            if (humans.Count != 1)
+                return CommandResult.Fail(
+                    ErrorCodes.NotEnoughPlayers,
+                    "创造模式需房主独自开局（将自动加入 3 名人机）");
+
+            // Drop any leftover bots from a previous aborted start (should not happen).
+            room.Players.RemoveAll(p => p.IsBot);
+
+            var botNames = new[] { "假人甲", "假人乙", "假人丙" };
+            foreach (var botName in botNames)
+            {
+                room.Players.Add(new RoomPlayer
+                {
+                    Id = PlayerId.New(),
+                    Name = botName,
+                    SeatIndex = room.Players.Count,
+                    IsHost = false,
+                    IsBot = true,
+                    ConnectionId = null,
+                });
+            }
+
+            IRandom rng;
+            int? appliedSeed = null;
+            if (debugSeed is int seed && _options.AllowDebugSeed)
+            {
+                rng = new SeededRandom(seed);
+                appliedSeed = seed;
+            }
+            else
+            {
+                rng = new SystemRandom();
+            }
+
+            var seats = ShuffleSeats(room.Players, rng);
+            var state = PrepDayPipeline.CreateGame(seats, rng);
+            state.Mode = GameMode.Creative;
+            room.Mode = GameMode.Creative;
+            ApplyBotFlags(room, state);
+            PrepDayPipeline.StartGame(state);
+            state.Log(
+                "CreativeStart",
+                "创造模式开始：1 名真人 + 3 名人机（假人会自动跳过，必须选择时取选项前列）");
+            state.Log(
+                "SeatOrder",
+                "座位顺序（随机）：" + string.Join(" → ", seats.Select(s => s.Name)));
+            if (appliedSeed is int s)
+                state.Log("DebugSeed", $"调试固定种子已启用：{s}");
+            room.Game = state;
+            RunBots(room);
+            return CommandResult.Success();
+        });
+    }
+
+    public CommandResult CreativeAddGem(string connectionId, string gemValue)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!TryParseGemValue(gemValue, out var value))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石面值（1–5）");
+
+            var result = ToCommand(CreativeModePipeline.AddGem(game, playerId, value));
+            if (result.Ok)
+                RunBots(room);
+            return result;
+        });
+    }
+
+    public CommandResult CreativeRemoveGem(string connectionId, string instanceId)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!CardInstanceId.TryParse(instanceId, out var id))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石实例 ID");
+            var result = ToCommand(CreativeModePipeline.RemoveGem(game, playerId, id));
+            if (result.Ok)
+                RunBots(room);
+            return result;
+        });
+    }
+
+    public CommandResult CreativeAddArcana(string connectionId, string arcanaKind)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!Enum.TryParse<ArcanaKind>(arcanaKind, ignoreCase: true, out var kind))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "未知秘术");
+            var result = ToCommand(CreativeModePipeline.AddArcana(game, playerId, kind));
+            if (result.Ok)
+                RunBots(room);
+            return result;
+        });
+    }
+
+    public CommandResult CreativeRemoveArcana(string connectionId, string instanceId)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!CardInstanceId.TryParse(instanceId, out var id))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效秘术实例 ID");
+            var result = ToCommand(CreativeModePipeline.RemoveArcana(game, playerId, id));
+            if (result.Ok)
+                RunBots(room);
+            return result;
+        });
+    }
+
+    public CommandResult CreativeAddRelic(string connectionId, string relicKind)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!Enum.TryParse<RelicKind>(relicKind, ignoreCase: true, out var kind))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "未知祭品");
+            var result = ToCommand(CreativeModePipeline.AddRelic(game, playerId, kind));
+            if (result.Ok)
+                RunBots(room);
+            return result;
+        });
+    }
+
+    public CommandResult CreativeRemoveRelic(string connectionId, string instanceId)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!CardInstanceId.TryParse(instanceId, out var id))
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效祭品实例 ID");
+            var result = ToCommand(CreativeModePipeline.RemoveRelic(game, playerId, id));
+            if (result.Ok)
+                RunBots(room);
+            return result;
         });
     }
 
@@ -222,20 +378,20 @@ public sealed class RoomService
             if (ids is null)
                 return CommandResult.Fail(ErrorCodes.InvalidCards, "无效的宝石实例 ID");
 
-            return ToCommand(PrepDayPipeline.SubmitOffer(game, playerId, sequenceRank, ids));
+            return FinishGameCommand(room, PrepDayPipeline.SubmitOffer(game, playerId, sequenceRank, ids));
         });
     }
 
     public CommandResult ClearOffer(string connectionId)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(PrepDayPipeline.ClearOffer(game, playerId)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, PrepDayPipeline.ClearOffer(game, playerId)));
     }
 
     public CommandResult PassArcana(string connectionId)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(PrepDayPipeline.PassArcana(game, playerId)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, PrepDayPipeline.PassArcana(game, playerId)));
     }
 
     public CommandResult PlayArcana(
@@ -246,7 +402,7 @@ public sealed class RoomService
         IReadOnlyList<string>? targetCardIds,
         string? rank)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (!Enum.TryParse<ArcanaKind>(arcanaKind, ignoreCase: true, out var kind))
                 return CommandResult.Fail(ErrorCodes.InvalidCards, "未知秘术");
@@ -255,7 +411,7 @@ public sealed class RoomService
             if (target is null)
                 return CommandResult.Fail(ErrorCodes.InvalidTarget, "无效的目标参数");
 
-            return ToCommand(PrepDayPipeline.PlayArcana(game, playerId, kind, target));
+            return FinishGameCommand(room, PrepDayPipeline.PlayArcana(game, playerId, kind, target));
         });
     }
 
@@ -267,21 +423,22 @@ public sealed class RoomService
         IReadOnlyList<string>? targetCardIds,
         string? rank)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             var target = BuildTarget(targetSlotIndices, targetPlayerIds, targetCardIds, rank);
             if (target is null)
                 return CommandResult.Fail(ErrorCodes.InvalidTarget, "无效的目标参数");
 
-            return ToCommand(
+            return FinishGameCommand(
+                room,
                 PrepDayPipeline.ArcanaStepResponse(game, playerId, stepId ?? "", target));
         });
     }
 
     public CommandResult PassTrade(string connectionId)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(OfferingDayPipeline.PassTrade(game, playerId)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, OfferingDayPipeline.PassTrade(game, playerId)));
     }
 
     public CommandResult ProposeTrade(
@@ -290,7 +447,7 @@ public sealed class RoomService
         string relicInstanceId,
         IReadOnlyList<string> buyerGemIds)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (!PlayerId.TryParse(sellerId, out var seller))
                 return CommandResult.Fail(ErrorCodes.InvalidTarget, "无效卖家");
@@ -300,26 +457,27 @@ public sealed class RoomService
             if (gems is null)
                 return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石");
 
-            return ToCommand(
+            return FinishGameCommand(
+                room,
                 OfferingDayPipeline.ProposeTrade(game, playerId, seller, relicId, gems));
         });
     }
 
     public CommandResult RespondTrade(string connectionId, bool accept)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(OfferingDayPipeline.RespondTrade(game, playerId, accept)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, OfferingDayPipeline.RespondTrade(game, playerId, accept)));
     }
 
     public CommandResult CancelTrade(string connectionId)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(OfferingDayPipeline.CancelTrade(game, playerId)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, OfferingDayPipeline.CancelTrade(game, playerId)));
     }
 
     public CommandResult BeginForceBuy(string connectionId, IReadOnlyList<string>? newBuyerGemIds)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             IReadOnlyList<CardInstanceId>? gems = null;
             if (newBuyerGemIds is not null)
@@ -329,30 +487,30 @@ public sealed class RoomService
                     return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石");
             }
 
-            return ToCommand(OfferingDayPipeline.BeginForceBuy(game, playerId, gems));
+            return FinishGameCommand(room, OfferingDayPipeline.BeginForceBuy(game, playerId, gems));
         });
     }
 
     public CommandResult CommitForceBuyBid(string connectionId, IReadOnlyList<string> gemIds)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             var gems = ParseCardIds(gemIds ?? Array.Empty<string>());
             if (gems is null)
                 return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石");
-            return ToCommand(OfferingDayPipeline.CommitForceBuyBid(game, playerId, gems));
+            return FinishGameCommand(room, OfferingDayPipeline.CommitForceBuyBid(game, playerId, gems));
         });
     }
 
     public CommandResult CastVote(string connectionId, bool yes)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
-            ToCommand(OfferingDayPipeline.CastVote(game, playerId, yes)));
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+            FinishGameCommand(room, OfferingDayPipeline.CastVote(game, playerId, yes)));
     }
 
     public CommandResult RaiseAuction(string connectionId, IReadOnlyList<string> gemInstanceIds)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (game.Phase == GamePhase.Finished || game.Phase == GamePhase.FinalScoring)
                 return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已结束");
@@ -361,24 +519,24 @@ public sealed class RoomService
             if (ids is null)
                 return CommandResult.Fail(ErrorCodes.InvalidCards, "无效的宝石实例 ID");
 
-            return ToCommand(RecoveryDayPipeline.RaiseAuction(game, playerId, ids));
+            return FinishGameCommand(room, RecoveryDayPipeline.RaiseAuction(game, playerId, ids));
         });
     }
 
     public CommandResult PassAuction(string connectionId)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (game.Phase == GamePhase.Finished || game.Phase == GamePhase.FinalScoring)
                 return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已结束");
 
-            return ToCommand(RecoveryDayPipeline.PassAuction(game, playerId));
+            return FinishGameCommand(room, RecoveryDayPipeline.PassAuction(game, playerId));
         });
     }
 
     public CommandResult SubmitAllInOffer(string connectionId, string rank)
     {
-        return WithGamePlayer(connectionId, (_, game, playerId) =>
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (game.Phase == GamePhase.Finished || game.Phase == GamePhase.FinalScoring)
                 return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已结束");
@@ -386,7 +544,8 @@ public sealed class RoomService
             if (!Enum.TryParse<SequenceRank>(rank, ignoreCase: true, out var sequenceRank))
                 return CommandResult.Fail(ErrorCodes.InvalidTarget, "无效序号");
 
-            return ToCommand(RecoveryDayPipeline.SubmitAllInOffer(game, playerId, sequenceRank));
+            return FinishGameCommand(
+                room, RecoveryDayPipeline.SubmitAllInOffer(game, playerId, sequenceRank));
         });
     }
 
@@ -565,6 +724,55 @@ public sealed class RoomService
         r.Ok
             ? CommandResult.Success()
             : CommandResult.Fail(r.ErrorCode ?? "Error", r.Message ?? "操作失败");
+
+    private static CommandResult FinishGameCommand(GameRoom room, DomainResult domain)
+    {
+        var result = ToCommand(domain);
+        if (result.Ok)
+            RunBots(room);
+        return result;
+    }
+
+    private static void RunBots(GameRoom room)
+    {
+        if (room.Game is null)
+            return;
+        BotDriver.RunAll(room.Game);
+    }
+
+    private static void ApplyBotFlags(GameRoom room, GameState state)
+    {
+        foreach (var rp in room.Players)
+        {
+            var ps = state.FindPlayer(rp.Id);
+            if (ps is not null)
+            {
+                ps.IsBot = rp.IsBot;
+                if (rp.IsBot)
+                    ps.IsConnected = true;
+            }
+        }
+    }
+
+    private static bool TryParseGemValue(string? raw, out GemValue value)
+    {
+        value = default;
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        if (Enum.TryParse(raw.Trim(), ignoreCase: true, out value)
+            && Enum.IsDefined(value))
+            return true;
+
+        if (int.TryParse(raw.Trim(), out var face)
+            && Enum.IsDefined(typeof(GemValue), face))
+        {
+            value = (GemValue)face;
+            return true;
+        }
+
+        return false;
+    }
 
     private string GenerateUniqueCode()
     {

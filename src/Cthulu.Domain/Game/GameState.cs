@@ -15,6 +15,11 @@ public sealed class GameState
     public int CurrentActorSeat { get; set; }
     public GamePhase Phase { get; set; }
 
+    /// <summary>Match mode (standard multiplayer vs creative sandbox).</summary>
+    public GameMode Mode { get; set; } = GameMode.Standard;
+
+    public bool IsCreative => Mode == GameMode.Creative;
+
     /// <summary>1-based counter of prep days started.</summary>
     public int PrepDayNumber { get; set; }
 

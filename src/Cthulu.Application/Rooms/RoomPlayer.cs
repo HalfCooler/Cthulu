@@ -11,5 +11,8 @@ public sealed class RoomPlayer
     public string? ConnectionId { get; set; }
     public bool IsHost { get; set; }
 
-    public bool IsConnected => !string.IsNullOrEmpty(ConnectionId);
+    /// <summary>AI seat filler (creative mode). Never has a real ConnectionId.</summary>
+    public bool IsBot { get; set; }
+
+    public bool IsConnected => IsBot || !string.IsNullOrEmpty(ConnectionId);
 }
