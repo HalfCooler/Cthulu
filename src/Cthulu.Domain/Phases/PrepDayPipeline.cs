@@ -57,23 +57,35 @@ public static class PrepDayPipeline
                     throw new InvalidOperationException($"Cannot deal gem {v} — deck exhausted.");
                 player.GemHand.Add(card);
             }
-            // R14: no initial arcana — first arcana come from prep-day soft-cap draw (R15).
         }
 
-        state.Log("InitialDeal", "初始发牌完成：每人宝石 1–5 各一（不发秘术）");
+        state.Log("InitialDeal", "初始发牌完成：每人宝石 1、2、3、4、5 各一。");
     }
 
-    /// <summary>R15 + reveal altar → Prep_Offer.</summary>
+    /// <summary>
+    /// Preparation Day
+    /// </summary>
     public static void BeginPrepDay(GameState state)
     {
         state.Phase = GamePhase.Prep_Draw;
         state.PrepDayNumber++;
         ClearPrepRound(state);
 
+        var n = state.AltarSlotCount;
+        var altar = DrawPileService.Draw(state.RelicDeck, state.RelicDiscard, n);
+        state.Altar.AddRange(altar);
+
+        state.Phase = GamePhase.Prep_Offer;
+        state.Log("PrepDayStart", $"第 {state.PrepDayNumber} 个筹备日开始，段内仍有 {state.PrepDaysRemainingInCycle - 1} 日。");
+        state.Log("PrepDayStart", $"每人摸 {GameRules.PrepDrawGems} 张宝石，少于 2 张秘术牌的玩家摸 1 张秘术。");
+        state.Log("PrepDayStart", $"从祭品牌堆抽取 {state.Altar.Count} 张至祭坛。");
+
         foreach (var player in state.SeatsFromDealer())
         {
             var gems = DrawPileService.Draw(state.GemDeck, state.GemDiscard, GameRules.PrepDrawGems);
             player.GemHand.AddRange(gems);
+            var gemNames = string.Join("、", gems.Select(c => $"宝石 {c.Def.FaceValue}"));
+            state.Log("Private", $"你摸到了 {gemNames}。", player.Id);
         }
 
         foreach (var player in state.SeatsFromDealer())
@@ -82,18 +94,11 @@ public static class PrepDayPipeline
             {
                 var a = DrawPileService.Draw(state.ArcanaDeck, state.ArcanaDiscard, 1);
                 player.ArcanaHand.AddRange(a);
+                var arcanaNames = string.Join("、", a.Select(c =>
+                    c.Def.ArcanaKind is { } k ? ArcanaDisplayName(k) : c.Def.DisplayKey));
+                state.Log("Private", $"你摸到了 {arcanaNames}。", player.Id);
             }
         }
-
-        var n = state.AltarSlotCount;
-        var altar = DrawPileService.Draw(state.RelicDeck, state.RelicDiscard, n);
-        state.Altar.AddRange(altar);
-
-        state.Phase = GamePhase.Prep_Offer;
-        state.Log(
-            "PrepDayStart",
-            $"第 {state.PrepDayNumber} 个筹备日（段内剩余含本日 {state.PrepDaysRemainingInCycle}）：" +
-            $"每人摸 {GameRules.PrepDrawGems} 张宝石；从祭品牌堆抽取 {state.Altar.Count} 张至祭坛");
     }
 
     private static void ClearPrepRound(GameState state)

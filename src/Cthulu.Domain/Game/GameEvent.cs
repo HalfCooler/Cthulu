@@ -2,7 +2,9 @@ using Cthulu.Domain.Ids;
 
 namespace Cthulu.Domain.Game;
 
-/// <summary>Desensitized event for the event log (Chinese message ready for UI).</summary>
+/// <summary>
+/// Desensitized event for the event log (Chinese message ready for UI).
+/// </summary>
 public sealed class GameEvent
 {
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;

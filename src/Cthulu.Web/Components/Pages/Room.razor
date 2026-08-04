@@ -27,14 +27,14 @@
     </div>
 }
 
-<div class="room-page">
+<div class="room-page room-layout">
     @if (_loading)
     {
-        <p class="muted">正在连接房间......</p>
+        <p class="muted room-loading">正在连接房间......</p>
     }
     else if (Game.CurrentView is null)
     {
-        <div class="panel empty-state">
+        <div class="panel empty-state room-full">
             <h2>尚未进入该房间</h2>
             <p class="muted">若你是从链接直接打开，请先用房间码与原昵称加入（可重连恢复座位）。</p>
             @if (!string.IsNullOrEmpty(_error))
@@ -57,353 +57,266 @@
         var inGame = view.Phase != "Lobby";
         var finished = view.IsFinished;
         var needsAction = NeedsYourAction(view);
+        var orderedPlayers = view.Players.OrderBy(p => p.SeatIndex).ToList();
 
-        <header class="room-header @(finished ? "finished-header" : null)">
-            <div>
-                <div class="room-code-label">房间码</div>
-                <div class="room-code">@view.RoomCode</div>
-            </div>
-            <div class="room-meta">
-                <div>
-                    <span class="label">阶段</span>
-                    @view.PhaseDisplayName
-                    @if (view.IsCreativeMode)
-                    {
-                        <span class="badge creative-badge">创造模式</span>
-                    }
-                    @if (finished)
-                    {
-                        <span class="badge finished-badge">对局结束</span>
-                    }
-                </div>
-                @if (inGame && !finished)
-                {
-                    <div><span class="label">筹备日</span> 第 @view.PrepDayNumber 天</div>
-                    <div><span class="label">循环</span> @(view.CycleIndex + 1) · 段内剩余 @view.PrepDaysRemainingInCycle</div>
-                    <div><span class="label">庄家</span> @(view.DealerName ?? "—")</div>
-                    @if (!string.IsNullOrEmpty(view.CurrentActorName))
-                    {
-                        <div><span class="label">行动者</span> @view.CurrentActorName</div>
-                    }
-                }
-                <div><span class="label">人数</span> @view.PlayerCount / @view.MaxPlayers</div>
-                <div><span class="label">你</span> @view.SelfName @(view.IsHost ? "（房主）" : "")</div>
-            </div>
-        </header>
-
-        @if (finished && view.ScorePreview is not null)
-        {
-            <section class="panel final-panel">
-                <h2 class="final-title">终局计分</h2>
-                <p class="final-sub">对局已结束 · 并列最高分均为胜者 · 下方可继续查看事件日志与祭品持有</p>
-                <div class="final-scores">
-                    @{
-                        var rank = 0;
-                        var lastTotal = int.MinValue;
-                        var displayRank = 0;
-                    }
-                    @foreach (var s in view.ScorePreview.Players)
-                    {
-                        rank++;
-                        if (s.Total != lastTotal)
+        @* ===== Left: game area (~2/3) ===== *@
+        <div class="room-main">
+            <header class="room-header @(finished ? "finished-header" : null)">
+                <div class="room-meta room-meta-inline">
+                    <div>
+                        <span class="label">阶段</span>
+                        @view.PhaseDisplayName
+                        @if (view.IsCreativeMode)
                         {
-                            displayRank = rank;
-                            lastTotal = s.Total;
+                            <span class="badge creative-badge">创造模式</span>
                         }
-                        <div class="final-row @(s.IsLeader ? "winner" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
-                            <span class="final-rank">#@displayRank</span>
-                            <span class="final-name">
-                                @s.Name
-                                @if (s.IsLeader)
-                                {
-                                    <span class="badge winner-badge">胜者</span>
-                                }
-                            </span>
-                            <span class="final-total">@s.Total 分</span>
+                        @if (finished)
+                        {
+                            <span class="badge finished-badge">对局结束</span>
+                        }
+                    </div>
+                    @if (inGame && !finished)
+                    {
+                        <div><span class="label">筹备日</span> 第 @view.PrepDayNumber 天</div>
+                        <div><span class="label">循环</span> @(view.CycleIndex + 1) · 段内剩余 @view.PrepDaysRemainingInCycle</div>
+                        <div><span class="label">庄家</span> @(view.DealerName ?? "—")</div>
+                    }
+                    <div><span class="label">人数</span> @view.PlayerCount / @view.MaxPlayers</div>
+                    <div><span class="label">你</span> @view.SelfName @(view.IsHost ? "（房主）" : "")</div>
+                    @if (inGame)
+                    {
+                        <div class="muted small deck-meta">
+                            牌堆：宝石 @view.GemDeckCount · 秘术 @view.ArcanaDeckCount · 祭品 @view.RelicDeckCount
                         </div>
                     }
                 </div>
-                <div class="action-bar compact">
-                    <a class="btn btn-primary" href="/">返回首页开新局</a>
-                    <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步视图</button>
-                </div>
-            </section>
-        }
-        else if (view.ScorePreview is not null && inGame)
-        {
-            <section class="score-bar panel">
-                <div class="score-bar-title">
-                    当前理论分
-                    @if (!view.ScorePreview.IsFinal)
-                    {
-                        <span class="badge score-badge">非最终</span>
-                    }
-                </div>
-                <div class="score-row">
-                    @foreach (var s in view.ScorePreview.Players)
-                    {
-                        <div class="score-chip @(s.IsLeader ? "leader" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
-                            <span class="score-name">@s.Name</span>
-                            <span class="score-val">@s.Total</span>
-                        </div>
-                    }
-                </div>
-            </section>
-        }
+            </header>
 
-        @if (!string.IsNullOrEmpty(view.Hint) && !finished)
-        {
-            <div class="alert alert-info @(needsAction ? "your-turn" : null)"
-                 role="@(needsAction ? "status" : null)">
-                @if (needsAction)
-                {
-                    <span class="your-turn-badge" aria-hidden="true">行动</span>
-                }
-                @view.Hint
-            </div>
-        }
-
-        @if (!string.IsNullOrEmpty(_error))
-        {
-            <div class="alert alert-error">@_error</div>
-        }
-
-        @if (!inGame)
-        {
-            <section class="panel">
-                <h2>成员列表</h2>
-                @if (view.Players.Count == 0)
-                {
-                    <p class="muted empty-hint">尚无成员（异常状态，请重新加入）</p>
-                }
-                else
-                {
-                    <table class="member-table">
-                        <thead>
-                            <tr>
-                                <th>座位</th>
-                                <th>昵称</th>
-                                <th>状态</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var p in view.Players)
-                            {
-                                <tr class="@(p.IsSelf ? "self-row" : null)">
-                                    <td>@p.SeatIndex</td>
-                                    <td>
-                                        @p.Name
-                                        @if (p.IsHost)
-                                        {
-                                            <span class="badge">房主</span>
-                                        }
-                                        @if (p.IsBot)
-                                        {
-                                            <span class="badge bot-badge">人机</span>
-                                        }
-                                    </td>
-                                    <td>
-                                        <span class="dot @(p.IsConnected ? "on" : "off")"></span>
-                                        @(p.IsBot ? "人机" : (p.IsConnected ? "在线" : "离线"))
-                                    </td>
-                                    <td>@(p.IsSelf ? "（你）" : "")</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </section>
-
-            @if (view.AllowDebugSeed && view.IsHost)
+            @if (finished && view.ScorePreview is not null)
             {
-                <section class="panel debug-panel">
-                    <h2>调试 · 固定种子 <span class="badge">Development</span></h2>
-                    <p class="muted small">可选。填写整数种子后开始，便于复现洗牌/发牌。留空则使用系统随机。</p>
-                    <label class="field">
-                        <span>RNG Seed</span>
-                        <input @bind="_debugSeedText" placeholder="例如 42" inputmode="numeric" />
-                    </label>
+                <section class="panel final-panel">
+                    <h2 class="final-title">终局计分</h2>
+                    <p class="final-sub">对局已结束 · 并列最高分均为胜者 · 右侧可查看事件日志</p>
+                    <div class="final-scores">
+                        @{
+                            var rank = 0;
+                            var lastTotal = int.MinValue;
+                            var displayRank = 0;
+                        }
+                        @foreach (var s in view.ScorePreview.Players)
+                        {
+                            rank++;
+                            if (s.Total != lastTotal)
+                            {
+                                displayRank = rank;
+                                lastTotal = s.Total;
+                            }
+                            <div class="final-row @(s.IsLeader ? "winner" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
+                                <span class="final-rank">#@displayRank</span>
+                                <span class="final-name">
+                                    @s.Name
+                                    @if (s.IsLeader)
+                                    {
+                                        <span class="badge winner-badge">胜者</span>
+                                    }
+                                </span>
+                                <span class="final-total">@s.Total 分</span>
+                            </div>
+                        }
+                    </div>
+                    <div class="action-bar compact">
+                        <a class="btn btn-primary" href="/">返回首页开新局</a>
+                    </div>
                 </section>
             }
 
-            <div class="action-bar">
-                @if (view.IsHost)
+            @if (!string.IsNullOrEmpty(_error))
+            {
+                <div class="alert alert-error">@_error</div>
+            }
+
+            @if (!inGame)
+            {
+                <section class="panel">
+                    <h2>成员列表</h2>
+                    @if (view.Players.Count == 0)
+                    {
+                        <p class="muted empty-hint">尚无成员（异常状态，请重新加入）</p>
+                    }
+                    else
+                    {
+                        <table class="member-table">
+                            <thead>
+                                <tr>
+                                    <th>座位</th>
+                                    <th>昵称</th>
+                                    <th>状态</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var p in orderedPlayers)
+                                {
+                                    <tr class="@(p.IsSelf ? "self-row" : null)">
+                                        <td>@p.SeatIndex</td>
+                                        <td>
+                                            @p.Name
+                                            @if (p.IsHost)
+                                            {
+                                                <span class="badge">房主</span>
+                                            }
+                                            @if (p.IsBot)
+                                            {
+                                                <span class="badge bot-badge">人机</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <span class="dot @(p.IsConnected ? "on" : "off")"></span>
+                                            @(p.IsBot ? "人机" : (p.IsConnected ? "在线" : "离线"))
+                                        </td>
+                                        <td>@(p.IsSelf ? "（你）" : "")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+
+                @if (view.AllowDebugSeed && view.IsHost)
                 {
-                    <button class="btn btn-primary"
-                            disabled="@(!view.CanStart || _busy)"
-                            @onclick="StartAsync">
-                        开始游戏
-                    </button>
-                    <button class="btn btn-accent"
-                            disabled="@(!view.CanStartCreative || _busy)"
-                            title="独自开局：1 真人 + 3 人机；可自由从牌库取还宝石/秘术/祭品"
-                            @onclick="StartCreativeAsync">
-                        创造模式
-                    </button>
-                    @if (!view.CanStart && !view.CanStartCreative)
+                    <section class="panel debug-panel">
+                        <h2>调试 · 固定种子 <span class="badge">Development</span></h2>
+                        <p class="muted small">可选。填写整数种子后开始，便于复现洗牌/发牌。留空则使用系统随机。</p>
+                        <label class="field">
+                            <span>RNG Seed</span>
+                            <input @bind="_debugSeedText" placeholder="例如 42" inputmode="numeric" />
+                        </label>
+                    </section>
+                }
+
+                <div class="action-bar">
+                    @if (view.IsHost)
+                    {
+                        <button class="btn btn-primary"
+                                disabled="@(!view.CanStart || _busy)"
+                                @onclick="StartAsync">
+                            开始游戏
+                        </button>
+                        <button class="btn btn-accent"
+                                disabled="@(!view.CanStartCreative || _busy)"
+                                title="独自开局：1 真人 + 3 人机；可自由从牌库取还宝石/秘术/祭品"
+                                @onclick="StartCreativeAsync">
+                            创造模式
+                        </button>
+                        @if (!view.CanStart && !view.CanStartCreative)
+                        {
+                            <span class="muted">
+                                @if (view.PlayerCount < view.MinPlayers)
+                                {
+                                    <text>至少 @view.MinPlayers 人才能开始标准局（当前 @view.PlayerCount）</text>
+                                }
+                                else
+                                {
+                                    <text>无法开始</text>
+                                }
+                            </span>
+                        }
+                        else if (!view.CanStart && view.CanStartCreative)
+                        {
+                            <span class="muted">标准局需 @view.MinPlayers 人；可点「创造模式」单人练习</span>
+                        }
+                    }
+                    else
                     {
                         <span class="muted">
                             @if (view.PlayerCount < view.MinPlayers)
                             {
-                                <text>至少 @view.MinPlayers 人才能开始标准局（当前 @view.PlayerCount）</text>
+                                <text>等待更多玩家（至少 @view.MinPlayers 人）......</text>
                             }
                             else
                             {
-                                <text>无法开始</text>
+                                <text>等待房主开始游戏......</text>
                             }
                         </span>
                     }
-                    else if (!view.CanStart && view.CanStartCreative)
-                    {
-                        <span class="muted">标准局需 @view.MinPlayers 人；可点「创造模式」单人练习</span>
-                    }
-                }
-                else
-                {
-                    <span class="muted">
-                        @if (view.PlayerCount < view.MinPlayers)
+                </div>
+            }
+            else if (!finished)
+            {
+                @* Who is acting *@
+                <section class="panel actor-panel @(needsAction ? "needs-you" : null)">
+                    <h2>谁在行动</h2>
+                    <div class="actor-line">
+                        @if (!string.IsNullOrEmpty(view.CurrentActorName))
                         {
-                            <text>等待更多玩家（至少 @view.MinPlayers 人）......</text>
+                            <span class="actor-name">@view.CurrentActorName</span>
+                            @if (view.IsMyTurn)
+                            {
+                                <span class="badge self-badge">你的回合</span>
+                            }
                         }
                         else
                         {
-                            <text>等待房主开始游戏......</text>
+                            <span class="muted">（当前无单独行动者 / 同时行动阶段）</span>
                         }
-                    </span>
-                }
-                <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步</button>
-                <a class="btn btn-link" href="/">离开（回首页）</a>
-            </div>
-        }
-        else if (!finished)
-        {
-            <!-- Altar -->
-            <section class="panel">
-                <h2>祭坛 <span class="muted small">堆剩 @view.RelicDeckCount</span></h2>
-                <div class="altar-row">
-                    @if (view.Altar.Count == 0)
+                    </div>
+                    @if (!string.IsNullOrEmpty(view.Hint))
                     {
-                        <span class="muted">（暂无祭品）</span>
-                    }
-                    else
-                    {
-                        @foreach (var slot in view.Altar)
-                        {
-                            var selected = _selectedSlots.Contains(slot.SlotIndex);
-                            <button type="button"
-                                    class="altar-card has-tip @(selected ? "selected" : null)"
-                                    data-tip="@slot.Description"
-                                    title="@slot.Description"
-                                    @onclick="() => ToggleSlot(slot.SlotIndex)">
-                                <div class="altar-rank">序号 @slot.Rank</div>
-                                <div class="altar-name">@slot.DisplayName</div>
-                                <div class="altar-flags">
-                                    @if (slot.ReverseThinking)
-                                    {
-                                        <span class="flag reverse">逆向</span>
-                                    }
-                                    @if (slot.EvilProphecy)
-                                    {
-                                        <span class="flag evil">预言</span>
-                                    }
-                                </div>
-                            </button>
-                        }
-                    }
-                </div>
-            </section>
-
-            <!-- Players -->
-            <section class="panel">
-                <h2>玩家</h2>
-                <div class="opponents-row">
-                    @foreach (var p in view.Players)
-                    {
-                        var playerSel = _selectedPlayerIds.Contains(p.PlayerId);
-                        <div class="player-card @(p.IsSelf ? "self" : null) @(p.IsCurrentActor ? "actor" : null) @(playerSel ? "selected-player" : null)"
-                             @onclick="() => TogglePlayer(p.PlayerId)">
-                            <div class="player-name">
-                                @p.Name
-                                @if (p.IsDealer)
-                                {
-                                    <span class="badge">庄</span>
-                                }
-                                @if (p.IsBot)
-                                {
-                                    <span class="badge bot-badge">人机</span>
-                                }
-                                @if (p.IsSelf)
-                                {
-                                    <span class="badge self-badge">你</span>
-                                }
-                            </div>
-                            <div class="player-counts">
-                                宝石 @p.GemCount · 秘术 @p.ArcanaCount
-                                @if (p.VirtualForbiddenKnowledge > 0)
-                                {
-                                    <span> · 虚禁 @p.VirtualForbiddenKnowledge</span>
-                                }
-                            </div>
-                            <div class="player-offer">
-                                @if (p.HasOffer)
-                                {
-                                    <span>供奉 @p.OfferGemCount 张</span>
-                                }
-                                else if (view.Phase == "Prep_Offer")
-                                {
-                                    <span class="muted">未供奉</span>
-                                }
-                            </div>
-                            @if (p.Relics.Count > 0)
+                        <div class="alert alert-info @(needsAction ? "your-turn" : null)"
+                             role="@(needsAction ? "status" : null)">
+                            @if (needsAction)
                             {
-                                <div class="player-relics">
-                                    @foreach (var r in p.Relics)
-                                    {
-                                        var rSel = _selectedRelicId == r.InstanceId && _tradeSellerId == p.PlayerId;
-                                        var relicTip = r.TradedSuccessfully
-                                            ? r.Description + "（已交易不可再卖）"
-                                            : r.Description;
-                                        <button type="button"
-                                                class="relic-chip has-tip @(r.TradedSuccessfully ? "traded" : null) @(rSel ? "selected" : null)"
-                                                data-tip="@relicTip"
-                                                title="@relicTip"
-                                                @onclick:stopPropagation="true"
-                                                @onclick="() => SelectTradeRelic(p.PlayerId, r)">
-                                            @r.DisplayName
-                                        </button>
-                                        @if (view.IsCreativeMode && p.IsSelf && !view.IsFinished)
-                                        {
-                                            <button type="button"
-                                                    class="btn-mini danger"
-                                                    title="归还牌库"
-                                                    disabled="@_busy"
-                                                    @onclick:stopPropagation="true"
-                                                    @onclick="() => CreativeRemoveRelicAsync(r.InstanceId)">×</button>
-                                        }
-                                    }
-                                </div>
+                                <span class="your-turn-badge" aria-hidden="true">行动</span>
                             }
-                            else
-                            {
-                                <div class="player-relics muted">无祭品</div>
-                            }
-                            <div class="conn">
-                                <span class="dot @(p.IsConnected ? "on" : "off")"></span>
-                                @(p.IsConnected ? "在线" : "离线")
-                                @if (view.Phase == "OfferingDay_Trade" && p.HasActedTrade)
-                                {
-                                    <span class="muted"> · 已行动</span>
-                                }
-                                @if (view.Phase == "VoteContinue" && p.HasVoted)
-                                {
-                                    <span class="muted"> · 已投票</span>
-                                }
-                            </div>
+                            @view.Hint
                         </div>
                     }
-                </div>
-            </section>
+                </section>
+
+                @* Altar *@
+                <section class="panel">
+                    <h2>祭坛 <span class="muted small">堆剩 @view.RelicDeckCount</span></h2>
+                    <div class="altar-row">
+                        @if (view.Altar.Count == 0)
+                        {
+                            <span class="muted">（暂无祭品）</span>
+                        }
+                        else
+                        {
+                            @foreach (var slot in view.Altar)
+                            {
+                                var selected = _selectedSlots.Contains(slot.SlotIndex);
+                                <button type="button"
+                                        class="altar-card has-tip @(selected ? "selected" : null)"
+                                        data-tip="@slot.Description"
+                                        title="@slot.Description"
+                                        @onclick="() => ToggleSlot(slot.SlotIndex)">
+                                    <div class="altar-rank">序号 @slot.Rank</div>
+                                    <div class="altar-name">@slot.DisplayName</div>
+                                    <div class="altar-flags">
+                                        @if (slot.ReverseThinking)
+                                        {
+                                            <span class="flag reverse">逆向</span>
+                                        }
+                                        @if (slot.EvilProphecy)
+                                        {
+                                            <span class="flag evil">预言</span>
+                                        }
+                                    </div>
+                                </button>
+                            }
+                        }
+                    </div>
+                </section>
+
+                @* Players (clockwise with seat arrows) *@
+                <section class="panel">
+                    <div class="panel-title-row">
+                        <h2>玩家</h2>
+                        <span class="muted small">顺时针 · 箭头指向下家</span>
+                    </div>
+                    @RenderPlayersCircle(view, orderedPlayers, interactive: true)
+                </section>
 
             <!-- Active Arcana Modal -->
             @if (view.ActiveArcana is not null)
@@ -711,75 +624,7 @@
                 </section>
             }
 
-            <!-- Creative mode: take from decks -->
-            @if (view.IsCreativeMode && !view.IsFinished && view.CreativeDeck is not null)
-            {
-                <section class="panel creative-panel">
-                    <h2>创造模式 · 从牌库取牌</h2>
-                    <p class="muted small">
-                        只能从牌库中挑选；点「+」加入你的手牌/祭品，点手牌上的「×」归还牌库。
-                        假人会自动跳过，必须选择时取选项列表前若干项。
-                    </p>
-
-                    <h3 class="subhead">宝石牌库（@view.GemDeckCount）</h3>
-                    <div class="creative-stock-row">
-                        @foreach (var s in view.CreativeDeck.Gems)
-                        {
-                            <button type="button"
-                                    class="stock-chip gem"
-                                    disabled="@(_busy || s.Count <= 0)"
-                                    title="@s.Description"
-                                    @onclick="() => CreativeAddGemAsync(s.Kind)">
-                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
-                            </button>
-                        }
-                        @if (view.CreativeDeck.Gems.Count == 0)
-                        {
-                            <span class="muted">（空）</span>
-                        }
-                    </div>
-
-                    <h3 class="subhead">秘术牌库（@view.ArcanaDeckCount）</h3>
-                    <div class="creative-stock-row">
-                        @foreach (var s in view.CreativeDeck.Arcana)
-                        {
-                            <button type="button"
-                                    class="stock-chip arcana has-tip"
-                                    data-tip="@s.Description"
-                                    title="@s.Description"
-                                    disabled="@(_busy || s.Count <= 0)"
-                                    @onclick="() => CreativeAddArcanaAsync(s.Kind)">
-                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
-                            </button>
-                        }
-                        @if (view.CreativeDeck.Arcana.Count == 0)
-                        {
-                            <span class="muted">（空）</span>
-                        }
-                    </div>
-
-                    <h3 class="subhead">祭品牌库（@view.RelicDeckCount）</h3>
-                    <div class="creative-stock-row">
-                        @foreach (var s in view.CreativeDeck.Relics)
-                        {
-                            <button type="button"
-                                    class="stock-chip relic has-tip"
-                                    data-tip="@s.Description"
-                                    title="@s.Description"
-                                    disabled="@(_busy || s.Count <= 0)"
-                                    @onclick="() => CreativeAddRelicAsync(s.Kind)">
-                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
-                            </button>
-                        }
-                        @if (view.CreativeDeck.Relics.Count == 0)
-                        {
-                            <span class="muted">（空）</span>
-                        }
-                    </div>
-                </section>
-            }
-
-            <!-- Hand -->
+            @* Hand *@
             @if (!view.IsFinished && (view.MyGems.Count > 0 || view.MyArcana.Count > 0 || view.MyOffer is not null
                 || view.CanSubmitOffer || view.CanPlayArcana || view.CanRaiseAuction || view.IsCreativeMode))
             {
@@ -940,56 +785,140 @@
                 </section>
             }
 
-            @RenderLogPanel(view)
+            @* Creative mode: take from decks (last) *@
+            @if (view.IsCreativeMode && !view.IsFinished && view.CreativeDeck is not null)
+            {
+                <section class="panel creative-panel">
+                    <h2>创造模式 · 从牌库取牌</h2>
+                    <p class="muted small">
+                        只能从牌库中挑选；点「+」加入你的手牌/祭品，点手牌上的「×」归还牌库。
+                        假人会自动跳过，必须选择时取选项列表前若干项。
+                    </p>
 
-            <div class="action-bar">
+                    <h3 class="subhead">宝石牌库（@view.GemDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Gems)
+                        {
+                            <button type="button"
+                                    class="stock-chip gem"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    title="@s.Description"
+                                    @onclick="() => CreativeAddGemAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Gems.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+
+                    <h3 class="subhead">秘术牌库（@view.ArcanaDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Arcana)
+                        {
+                            <button type="button"
+                                    class="stock-chip arcana has-tip"
+                                    data-tip="@s.Description"
+                                    title="@s.Description"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    @onclick="() => CreativeAddArcanaAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Arcana.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+
+                    <h3 class="subhead">祭品牌库（@view.RelicDeckCount）</h3>
+                    <div class="creative-stock-row">
+                        @foreach (var s in view.CreativeDeck.Relics)
+                        {
+                            <button type="button"
+                                    class="stock-chip relic has-tip"
+                                    data-tip="@s.Description"
+                                    title="@s.Description"
+                                    disabled="@(_busy || s.Count <= 0)"
+                                    @onclick="() => CreativeAddRelicAsync(s.Kind)">
+                                + @s.DisplayName <span class="stock-n">×@s.Count</span>
+                            </button>
+                        }
+                        @if (view.CreativeDeck.Relics.Count == 0)
+                        {
+                            <span class="muted">（空）</span>
+                        }
+                    </div>
+                </section>
+            }
+            }
+            else
+            {
+                @* Finished: players for review *@
+                <section class="panel">
+                    <div class="panel-title-row">
+                        <h2>玩家持有（终局）</h2>
+                        <span class="muted small">顺时针 · 箭头指向下家</span>
+                    </div>
+                    @RenderPlayersCircle(view, orderedPlayers, interactive: false)
+                </section>
+            }
+        </div>
+
+        @* ===== Right: info sidebar (~1/3) ===== *@
+        <aside class="room-sidebar">
+            <div class="sidebar-code panel">
+                <div class="room-code-label">房间码</div>
+                <div class="room-code">@view.RoomCode</div>
+            </div>
+
+            @if (view.ScorePreview is not null && inGame && !finished)
+            {
+                <section class="score-bar panel">
+                    <div class="score-bar-title">
+                        当前理论分
+                        @if (!view.ScorePreview.IsFinal)
+                        {
+                            <span class="badge score-badge">非最终</span>
+                        }
+                    </div>
+                    <div class="score-row score-row-col">
+                        @foreach (var s in view.ScorePreview.Players)
+                        {
+                            <div class="score-chip @(s.IsLeader ? "leader" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
+                                <span class="score-name">@s.Name</span>
+                                <span class="score-val">@s.Total</span>
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
+            else if (finished && view.ScorePreview is not null)
+            {
+                <section class="score-bar panel">
+                    <div class="score-bar-title">最终得分</div>
+                    <div class="score-row score-row-col">
+                        @foreach (var s in view.ScorePreview.Players)
+                        {
+                            <div class="score-chip @(s.IsLeader ? "leader" : null) @(s.PlayerId == view.SelfPlayerId ? "self" : null)">
+                                <span class="score-name">@s.Name</span>
+                                <span class="score-val">@s.Total</span>
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
+
+            <div class="sidebar-actions">
                 <button class="btn btn-ghost" disabled="@_busy" @onclick="SyncAsync">同步</button>
-                <span class="muted small">牌堆：宝石 @view.GemDeckCount · 秘术 @view.ArcanaDeckCount · 祭品 @view.RelicDeckCount</span>
                 <a class="btn btn-link" href="/">离开（回首页）</a>
             </div>
-        }
-        else
-        {
-            @* Finished: show players + log for review *@
-            <section class="panel">
-                <h2>玩家持有（终局）</h2>
-                <div class="opponents-row">
-                    @foreach (var p in view.Players)
-                    {
-                        <div class="player-card @(p.IsSelf ? "self" : null)">
-                            <div class="player-name">
-                                @p.Name
-                                @if (p.IsSelf)
-                                {
-                                    <span class="badge self-badge">你</span>
-                                }
-                            </div>
-                            <div class="player-relics">
-                                @if (p.Relics.Count == 0)
-                                {
-                                    <span class="muted">无祭品</span>
-                                }
-                                else
-                                {
-                                    @foreach (var r in p.Relics)
-                                    {
-                                        <span class="relic-chip has-tip @(r.TradedSuccessfully ? "traded" : null)"
-                                              data-tip="@r.Description"
-                                              title="@r.Description">@r.DisplayName</span>
-                                    }
-                                }
-                            </div>
-                            @if (p.VirtualForbiddenKnowledge > 0)
-                            {
-                                <div class="muted small">虚禁 @p.VirtualForbiddenKnowledge</div>
-                            }
-                        </div>
-                    }
-                </div>
-            </section>
 
-            @RenderLogPanel(view)
-        }
+            <div class="sidebar-log">
+                @RenderLogPanel(view)
+            </div>
+        </aside>
     }
 </div>
 
@@ -1055,6 +984,136 @@
         return tip;
     }
 
+    /// <summary>
+    /// Clockwise seat order with arrows pointing to the next seat (下家).
+    /// </summary>
+    private RenderFragment RenderPlayersCircle(
+        RoomView view,
+        IReadOnlyList<PlayerPublicView> orderedPlayers,
+        bool interactive) => __builder =>
+    {
+        <div class="players-circle" role="list">
+            @for (var i = 0; i < orderedPlayers.Count; i++)
+            {
+                var p = orderedPlayers[i];
+                var next = orderedPlayers[(i + 1) % orderedPlayers.Count];
+                var playerSel = interactive && _selectedPlayerIds.Contains(p.PlayerId);
+                <div class="players-circle-item" role="listitem">
+                    <div class="player-card @(p.IsSelf ? "self" : null) @(p.IsCurrentActor ? "actor" : null) @(playerSel ? "selected-player" : null) @(interactive ? null : "readonly")"
+                         @onclick="() => { if (interactive) TogglePlayer(p.PlayerId); }">
+                        <div class="player-seat muted tiny">座 @p.SeatIndex</div>
+                        <div class="player-name">
+                            @p.Name
+                            @if (p.IsDealer)
+                            {
+                                <span class="badge">庄</span>
+                            }
+                            @if (p.IsBot)
+                            {
+                                <span class="badge bot-badge">人机</span>
+                            }
+                            @if (p.IsSelf)
+                            {
+                                <span class="badge self-badge">你</span>
+                            }
+                        </div>
+                        @if (interactive)
+                        {
+                            <div class="player-counts">
+                                宝石 @p.GemCount · 秘术 @p.ArcanaCount
+                                @if (p.VirtualForbiddenKnowledge > 0)
+                                {
+                                    <span> · 虚禁 @p.VirtualForbiddenKnowledge</span>
+                                }
+                            </div>
+                            <div class="player-offer">
+                                @if (p.HasOffer)
+                                {
+                                    <span>供奉 @p.OfferGemCount 张</span>
+                                }
+                                else if (view.Phase == "Prep_Offer")
+                                {
+                                    <span class="muted">未供奉</span>
+                                }
+                            </div>
+                        }
+                        @if (p.Relics.Count > 0)
+                        {
+                            <div class="player-relics">
+                                @foreach (var r in p.Relics)
+                                {
+                                    if (interactive)
+                                    {
+                                        var rSel = _selectedRelicId == r.InstanceId && _tradeSellerId == p.PlayerId;
+                                        var relicTip = r.TradedSuccessfully
+                                            ? r.Description + "（已交易不可再卖）"
+                                            : r.Description;
+                                        <button type="button"
+                                                class="relic-chip has-tip @(r.TradedSuccessfully ? "traded" : null) @(rSel ? "selected" : null)"
+                                                data-tip="@relicTip"
+                                                title="@relicTip"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => SelectTradeRelic(p.PlayerId, r)">
+                                            @r.DisplayName
+                                        </button>
+                                        @if (view.IsCreativeMode && p.IsSelf && !view.IsFinished)
+                                        {
+                                            <button type="button"
+                                                    class="btn-mini danger"
+                                                    title="归还牌库"
+                                                    disabled="@_busy"
+                                                    @onclick:stopPropagation="true"
+                                                    @onclick="() => CreativeRemoveRelicAsync(r.InstanceId)">×</button>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="relic-chip has-tip @(r.TradedSuccessfully ? "traded" : null)"
+                                              data-tip="@r.Description"
+                                              title="@r.Description">@r.DisplayName</span>
+                                    }
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="player-relics muted">无祭品</div>
+                        }
+                        @if (interactive)
+                        {
+                            <div class="conn">
+                                <span class="dot @(p.IsConnected ? "on" : "off")"></span>
+                                @(p.IsConnected ? "在线" : "离线")
+                                @if (view.Phase == "OfferingDay_Trade" && p.HasActedTrade)
+                                {
+                                    <span class="muted"> · 已行动</span>
+                                }
+                                @if (view.Phase == "VoteContinue" && p.HasVoted)
+                                {
+                                    <span class="muted"> · 已投票</span>
+                                }
+                            </div>
+                        }
+                        else if (p.VirtualForbiddenKnowledge > 0)
+                        {
+                            <div class="muted small">虚禁 @p.VirtualForbiddenKnowledge</div>
+                        }
+                    </div>
+                    @if (orderedPlayers.Count > 1)
+                    {
+                        var isWrap = i == orderedPlayers.Count - 1;
+                        <div class="seat-arrow @(isWrap ? "wrap" : null)"
+                             title="@p.Name 的下家是 @next.Name（顺时针@(isWrap ? "，闭环回首座" : "")）"
+                             aria-label="@p.Name 的下家是 @next.Name">
+                            <span class="seat-arrow-glyph" aria-hidden="true">@(isWrap ? "↻" : "→")</span>
+                            <span class="seat-arrow-label">@(isWrap ? "回首" : "下家")</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    };
+
     private RenderFragment RenderMyOffer(MyOfferView offer, bool selectable = false) => __builder =>
     {
         var altarSlot = Game.CurrentView?.Altar.FirstOrDefault(s => s.Rank == offer.Rank);
@@ -1100,11 +1159,11 @@
 
     private RenderFragment RenderLogPanel(RoomView view) => __builder =>
     {
-        <section class="panel log-panel">
+        <section class="panel log-panel sidebar-log-panel">
             <div class="log-header">
                 <h2>事件日志</h2>
                 <div class="log-header-meta">
-                    <span class="muted small">最近 @view.Log.Count 条 · 新在上</span>
+                    <span class="muted small">@view.Log.Count 条 · 新在上</span>
                     <button type="button"
                             class="btn btn-ghost btn-sm log-tts-btn @(_voiceNotifyEnabled ? "voice-on" : null)"
                             title="@(_voiceNotifyEnabled ? "关闭轮到行动时的语音提醒" : "开启轮到行动时语音播报「轮到你了！」")"

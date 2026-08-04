@@ -69,6 +69,14 @@ a:hover { text-decoration: underline; }
     padding: 1.5rem 1rem 3rem;
 }
 
+/* Room page: full-width horizontal board */
+.app-main:has(.room-layout) {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0.75rem 1rem 1rem;
+}
+
 /* Lobby */
 .lobby-hero {
     text-align: center;
@@ -429,9 +437,242 @@ input:focus {
     color: white;
 }
 
-/* M1 table */
+/* M1 table / lobby default width (room overrides via :has(.room-layout)) */
 .app-main {
     width: min(1100px, 100%);
+}
+
+/* ========== Room horizontal layout ========== */
+.room-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 0.85rem;
+    min-height: calc(100vh - 4.5rem);
+    width: 100%;
+}
+
+.room-main {
+    flex: 2 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.room-sidebar {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    position: sticky;
+    top: 3.6rem;
+    align-self: flex-start;
+    max-height: calc(100vh - 4.2rem);
+}
+
+.room-loading,
+.room-full {
+    width: 100%;
+}
+
+.room-header {
+    margin-bottom: 0.65rem;
+}
+
+.room-meta-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+    align-items: center;
+}
+
+.room-meta-inline .deck-meta {
+    width: 100%;
+    margin-top: 0.15rem;
+}
+
+.panel-title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.panel-title-row h2 {
+    margin: 0;
+}
+
+/* Who is acting */
+.actor-panel .actor-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.actor-panel .actor-name {
+    font-size: 1.25rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #fff;
+}
+
+.actor-panel.needs-you {
+    border-color: rgba(62, 207, 142, 0.45);
+    box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.15);
+}
+
+.actor-panel .alert {
+    margin-top: 0.35rem;
+}
+
+/* Clockwise player row with seat arrows */
+.players-circle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.35rem 0;
+}
+
+.players-circle-item {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.players-circle-item .player-card {
+    flex: 1 1 140px;
+    min-width: 132px;
+    max-width: 220px;
+}
+
+.players-circle-item .player-card.readonly {
+    cursor: default;
+}
+
+.player-seat {
+    margin-bottom: 0.15rem;
+    letter-spacing: 0.04em;
+}
+
+.seat-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 0 0.2rem;
+    color: var(--accent);
+    user-select: none;
+    min-width: 2rem;
+}
+
+.seat-arrow-glyph {
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1;
+    color: #9b86ff;
+    text-shadow: 0 0 12px rgba(124, 92, 255, 0.45);
+}
+
+.seat-arrow-label {
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    margin-top: 0.1rem;
+}
+
+.seat-arrow.wrap .seat-arrow-glyph {
+    color: var(--muted);
+    text-shadow: none;
+}
+
+/* Right sidebar pieces */
+.sidebar-code {
+    margin-bottom: 0;
+    padding: 0.85rem 1rem;
+    text-align: center;
+}
+
+.sidebar-code .room-code {
+    font-size: 1.55rem;
+}
+
+.room-sidebar .score-bar {
+    margin-bottom: 0;
+}
+
+.score-row-col {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.score-row-col .score-chip {
+    justify-content: space-between;
+    border-radius: 8px;
+}
+
+.sidebar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 0.15rem;
+}
+
+.sidebar-actions .btn-ghost {
+    flex: 1 1 auto;
+    min-width: 5rem;
+}
+
+.sidebar-log {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-log-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: none;
+    height: 100%;
+}
+
+.sidebar-log-panel .log-list {
+    flex: 1 1 auto;
+    max-height: none;
+    min-height: 12rem;
+    overflow-y: auto;
+}
+
+@media (max-width: 960px) {
+    .room-layout {
+        flex-direction: column;
+    }
+
+    .room-main {
+        order: 0;
+    }
+
+    .room-sidebar {
+        order: 1;
+        position: static;
+        max-height: none;
+    }
+
+    .sidebar-log-panel .log-list {
+        max-height: 240px;
+    }
 }
 
 .small, .tiny { font-size: 0.8rem; color: var(--muted); }
@@ -1019,20 +1260,20 @@ input:focus {
     cursor: not-allowed;
 }
 
-/* Hover tooltips for altar / arcana / relic buttons */
+/* Hover targets: floating tip is rendered by tooltip.js (viewport-aware) */
 .has-tip {
+    /* keep relative so existing layout is unchanged */
     position: relative;
 }
 
-.has-tip::after {
-    content: attr(data-tip);
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 8px);
-    transform: translateX(-50%) translateY(4px);
-    z-index: 40;
+/* Single fixed host — not clipped by overflow parents; JS clamps to viewport */
+.floating-tip {
+    position: fixed;
+    z-index: 3000;
+    left: 0;
+    top: 0;
     width: max-content;
-    max-width: min(18rem, 70vw);
+    max-width: min(18rem, calc(100vw - 1rem));
     padding: 0.45rem 0.65rem;
     border-radius: 8px;
     border: 1px solid var(--border);
@@ -1047,26 +1288,12 @@ input:focus {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+    transition: opacity 0.12s ease, visibility 0.12s;
 }
 
-.has-tip:hover::after,
-.has-tip:focus-visible::after {
+.floating-tip.is-visible {
     opacity: 1;
     visibility: visible;
-    transform: translateX(-50%) translateY(0);
-}
-
-/* Prefer below when near top of viewport (hand / altar mid-page still use above) */
-.hand-row .has-tip::after {
-    bottom: auto;
-    top: calc(100% + 8px);
-    transform: translateX(-50%) translateY(-4px);
-}
-
-.hand-row .has-tip:hover::after,
-.hand-row .has-tip:focus-visible::after {
-    transform: translateX(-50%) translateY(0);
 }
 
 .modal-panel {
