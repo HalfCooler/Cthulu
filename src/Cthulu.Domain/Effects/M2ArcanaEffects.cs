@@ -115,7 +115,7 @@ public sealed class PeekEffect : IArcanaEffect
         if (!isActor && !isTarget)
             return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者与被窥视者可操作");
 
-        // --- Reveal: actor must acknowledge; clear snapshot so peek cannot be re-viewed ---
+        // --- Reveal: actor must acknowledge; clear one-shot UI snapshot (rank/sum kept for ReOffer reminder) ---
         if (string.Equals(stepId, StepAck, StringComparison.OrdinalIgnoreCase)
             || string.Equals(stepId, StepReveal, StringComparison.OrdinalIgnoreCase))
         {
@@ -123,6 +123,24 @@ public sealed class PeekEffect : IArcanaEffect
                 return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "窥视查看已结束");
             if (!isActor)
                 return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者可确认查看");
+
+            var targetP = state.FindPlayer(targetId)!;
+            var rank = active.PeekSnapshotRank ?? "?";
+            var sum = active.PeekSnapshotSum;
+            var gemFaces = active.TempCards
+                .Select(c => c.Def.FaceValue.ToString())
+                .ToList();
+            var gemSummary = gemFaces.Count > 0 ? string.Join("、", gemFaces) : "无";
+            var detail = $"序号 {rank}，宝石 {gemSummary}（sum={sum}）";
+
+            // Private log: only the peeker sees the full offer result after Ack.
+            state.Log(
+                "Arcana_Peek_Result",
+                $"【窥视结果】{targetP.Name} 的供奉：{detail}",
+                active.ActorId);
+
+            // Persist text reminder for ReOffer phase (actor only; no full card re-view).
+            active.Data["PeekReminder"] = $"{targetP.Name}：{detail}";
 
             ClearPeekSnapshot(active);
             active.StepId = StepReOffer;

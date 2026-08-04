@@ -222,6 +222,12 @@ public sealed class ActiveArcanaView
     /// <summary>Peek: one-shot reveal of target offer (only during Reveal step, actor only).</summary>
     public PeekedOfferView? PeekedOffer { get; init; }
 
+    /// <summary>
+    /// Peek: actor-only text reminder of the peeked offer during ReOffer
+    /// (after Reveal Ack; does not re-open full card view).
+    /// </summary>
+    public string? PeekReminder { get; init; }
+
     /// <summary>ArtificialBreeding / Transplant temp cards visible to actor.</summary>
     public IReadOnlyList<CardView> TempCards { get; init; } = Array.Empty<CardView>();
 

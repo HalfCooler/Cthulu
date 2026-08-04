@@ -420,8 +420,8 @@ public sealed class ViewProjector
         var isActor = observerId.Equals(a.ActorId);
         var isTarget = a.TargetPlayerIds.Any(t => t.Equals(observerId));
 
-        // Peek: one-shot snapshot only during Reveal, only to the actor.
-        // After Ack the snapshot is cleared — peeker cannot keep viewing.
+        // Peek: one-shot card snapshot only during Reveal, only to the actor.
+        // After Ack, TempCards/rank UI snapshot is cleared; PeekReminder text remains for actor.
         PeekedOfferView? peeked = null;
         var isPeekReveal = a.Kind == ArcanaKind.Peek
             && string.Equals(a.StepId, "Reveal", StringComparison.OrdinalIgnoreCase);
@@ -437,6 +437,14 @@ public sealed class ViewProjector
                 Gems = a.TempCards.Select(ToCardView).ToList(),
                 Sum = a.PeekSnapshotSum,
             };
+        }
+
+        string? peekReminder = null;
+        if (a.Kind == ArcanaKind.Peek && isActor && !isPeekReveal
+            && a.Data.TryGetValue("PeekReminder", out var reminderText)
+            && !string.IsNullOrWhiteSpace(reminderText))
+        {
+            peekReminder = reminderText;
         }
 
         // Breeding/Transplant temp cards stay on TempCards for actor; Peek uses them only as reveal snapshot.
@@ -467,6 +475,10 @@ public sealed class ViewProjector
                 prompt = "可重新供奉（先退回原宝石）或保持原供奉；双方都决定后秘术结束";
             else if (!isPeekReveal)
                 prompt = "双方正在处理窥视后的重供选择......";
+
+            // Actor: keep opponent offer in mind during ReOffer (also mirrored in private log).
+            if (peekReminder is not null)
+                prompt = $"【窥视提醒】对方供奉 {peekReminder}。{prompt}";
         }
 
         return new ActiveArcanaView
@@ -481,6 +493,7 @@ public sealed class ViewProjector
             CanRespond = canRespond,
             IHaveFinished = iHaveFinished,
             PeekedOffer = peeked,
+            PeekReminder = peekReminder,
             TempCards = tempCards,
             TargetPlayerIds = a.TargetPlayerIds.Select(id => id.ToString()).ToList(),
             TargetPlayerNames = a.TargetPlayerIds

@@ -425,7 +425,15 @@
                                     <span class="card gem">@g.DisplayName</span>
                                 }
                             </div>
-                            <p class="muted small">确认后将无法再次查看对方供奉，进入双方重供阶段。</p>
+                            <p class="muted small">确认后进入双方重供阶段；完整结果会写入你的私密日志，重供时另有文字提醒。</p>
+                        </div>
+                    }
+                    else if (!string.IsNullOrEmpty(aa.PeekReminder))
+                    {
+                        <div class="peek-box peek-reminder">
+                            <strong>窥视提醒（对方供奉）：</strong>
+                            @aa.PeekReminder
+                            <p class="muted small">完整结果已记入你的私密日志；此处仅作重供参考。</p>
                         </div>
                     }
 
