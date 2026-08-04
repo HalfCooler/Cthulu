@@ -90,14 +90,12 @@ public static class PrepDayPipeline
 
         foreach (var player in state.SeatsFromDealer())
         {
-            if (player.ArcanaHand.Count < GameRules.ArcanaHandSoftCap)
-            {
-                var a = DrawPileService.Draw(state.ArcanaDeck, state.ArcanaDiscard, 1);
-                player.ArcanaHand.AddRange(a);
-                var arcanaNames = string.Join("、", a.Select(c =>
-                    c.Def.ArcanaKind is { } k ? ArcanaDisplayName(k) : c.Def.DisplayKey));
-                state.Log("Private", $"你摸到了 {arcanaNames}。", player.Id);
-            }
+            if (player.ArcanaHand.Count >= GameRules.ArcanaHandSoftCap) continue;
+            
+            var a = DrawPileService.Draw(state.ArcanaDeck, state.ArcanaDiscard, 1);
+            player.ArcanaHand.AddRange(a);
+            var arcanaNames = string.Join("、", a.Select(c => c.Def.ArcanaKind is { } k ? ArcanaDisplayName(k) : c.Def.DisplayKey));
+            state.Log("Private", $"你摸到了 {arcanaNames}。", player.Id);
         }
     }
 
@@ -525,7 +523,7 @@ public static class PrepDayPipeline
             _ => card.Def.DisplayKey,
         };
 
-    private static string ArcanaDisplayName(ArcanaKind kind) => kind switch
+    public static string ArcanaDisplayName(ArcanaKind kind) => kind switch
     {
         ArcanaKind.FishingNet => "渔网",
         ArcanaKind.Omniscient => "全知者",

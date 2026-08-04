@@ -757,6 +757,38 @@ input:focus {
     box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.5);
 }
 
+/* Spiritism: offer rank publicly known — keep the rank plate lit */
+.player-card.rank-revealed {
+    border-color: rgba(255, 196, 72, 0.55);
+    box-shadow: 0 0 0 1px rgba(255, 196, 72, 0.35), 0 0 12px rgba(255, 196, 72, 0.12);
+}
+
+.player-revealed-rank {
+    margin: 0.25rem 0 0.15rem;
+}
+
+.player-revealed-rank .rank-chip {
+    display: inline-block;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 196, 72, 0.55);
+    background: rgba(255, 196, 72, 0.14);
+    color: #ffd98a;
+}
+
+.player-revealed-rank .rank-chip.lit {
+    box-shadow: 0 0 10px rgba(255, 196, 72, 0.35);
+    animation: rank-lit-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes rank-lit-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(255, 196, 72, 0.28); }
+    50% { box-shadow: 0 0 14px rgba(255, 196, 72, 0.5); }
+}
+
 .player-name {
     font-weight: 700;
     margin-bottom: 0.3rem;

@@ -1,14 +1,12 @@
 using Cthulu.Domain.Cards;
 using Cthulu.Domain.Game;
 using Cthulu.Domain.Ids;
-using Cthulu.Domain.Players;
 
 namespace Cthulu.Domain.Effects;
 
 internal static class ArcanaHelpers
 {
-    public static EffectValidation RequireOtherPlayer(
-        GameState state, PlayerId actor, ArcanaTarget target, int count = 1)
+    public static EffectValidation RequireOtherPlayer(GameState state, PlayerId actor, ArcanaTarget target, int count = 1)
     {
         if (target.PlayerIds.Count != count)
             return EffectValidation.Fail(
@@ -55,8 +53,7 @@ internal static class ArcanaHelpers
 }
 
 /// <summary>
-/// 窥视：查看目标供奉（一次性），随后双方各自选择重供或保持。
-/// Steps: Reveal (actor acknowledges) → ReOffer/Skip (each of actor & target once) → done.
+/// 窥视：查看目标供奉的序号和宝石，随后双方各自可以选择重新供奉。
 /// </summary>
 public sealed class PeekEffect : IArcanaEffect
 {
@@ -71,10 +68,7 @@ public sealed class PeekEffect : IArcanaEffect
     {
         var v = ArcanaHelpers.RequireOtherPlayer(state, actor, target);
         if (!v.Ok) return v;
-        var tid = target.PlayerIds[0];
-        if (!state.Offers.ContainsKey(tid))
-            return EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "目标尚未供奉");
-        return EffectValidation.Success();
+        return !state.Offers.ContainsKey(target.PlayerIds[0]) ? EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "目标尚未供奉") : EffectValidation.Success();
     }
 
     public EffectApplicationResult Apply(GameState state, PlayerId actor, ArcanaTarget target)
@@ -94,7 +88,6 @@ public sealed class PeekEffect : IArcanaEffect
             PeekSnapshotSum = offer.Sum,
         };
         active.TargetPlayerIds.Add(tid);
-        // Snapshot gem faces for one-shot reveal (display only; cards stay on offer).
         active.TempCards.AddRange(offer.Gems);
         state.ActiveArcana = active;
 
@@ -114,10 +107,8 @@ public sealed class PeekEffect : IArcanaEffect
         var isTarget = responder.Equals(targetId);
         if (!isActor && !isTarget)
             return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者与被窥视者可操作");
-
-        // --- Reveal: actor must acknowledge; clear one-shot UI snapshot (rank/sum kept for ReOffer reminder) ---
-        if (string.Equals(stepId, StepAck, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(stepId, StepReveal, StringComparison.OrdinalIgnoreCase))
+        
+        if (string.Equals(stepId, StepAck, StringComparison.OrdinalIgnoreCase) || string.Equals(stepId, StepReveal, StringComparison.OrdinalIgnoreCase))
         {
             if (!string.Equals(active.StepId, StepReveal, StringComparison.OrdinalIgnoreCase))
                 return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "窥视查看已结束");
@@ -133,13 +124,7 @@ public sealed class PeekEffect : IArcanaEffect
             var gemSummary = gemFaces.Count > 0 ? string.Join("、", gemFaces) : "无";
             var detail = $"序号 {rank}，宝石 {gemSummary}（sum={sum}）";
 
-            // Private log: only the peeker sees the full offer result after Ack.
-            state.Log(
-                "Arcana_Peek_Result",
-                $"【窥视结果】{targetP.Name} 的供奉：{detail}",
-                active.ActorId);
-
-            // Persist text reminder for ReOffer phase (actor only; no full card re-view).
+            state.Log("Private", $"{targetP.Name} 的供奉：{detail}", active.ActorId);
             active.Data["PeekReminder"] = $"{targetP.Name}：{detail}";
 
             ClearPeekSnapshot(active);
@@ -149,26 +134,23 @@ public sealed class PeekEffect : IArcanaEffect
             return EffectApplicationResult.NeedInput(StepReOffer, active.Prompt!);
         }
 
-        // Re-offer phase only after reveal is closed
         if (string.Equals(active.StepId, StepReveal, StringComparison.OrdinalIgnoreCase))
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "请先确认窥视结果");
 
         if (PlayerFinished(active, isActor))
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "你已结束重供选择");
 
-        if (string.Equals(stepId, StepSkip, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(stepId, "Done", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(stepId, StepSkip, StringComparison.OrdinalIgnoreCase) || string.Equals(stepId, "Done", StringComparison.OrdinalIgnoreCase))
         {
             MarkFinished(active, isActor);
             var p = state.FindPlayer(responder)!;
-            state.Log("Arcana_Peek_Skip", $"{p.Name} 选择保持原供奉");
+            state.Log("Private", "你选择保持原供奉", p.Id);
             return AfterPlayerDecision(state, active);
         }
 
         if (!string.Equals(stepId, StepReOffer, StringComparison.OrdinalIgnoreCase))
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidTarget, "未知步骤");
 
-        // Re-offer: first return previous offer gems to hand, then submit from hand ∪ prior offer.
         if (target.Rank is null)
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidTarget, "请指定新序号");
         if (!GameRules.IsValidRank(target.Rank.Value, state.PlayerCount))
@@ -213,7 +195,7 @@ public sealed class PeekEffect : IArcanaEffect
         state.Offers[responder] = newOffer;
 
         MarkFinished(active, isActor);
-        state.Log("Arcana_Peek_ReOffer", $"{player.Name} 在窥视后重新供奉了 {newOffer.GemCount} 张");
+        state.Log("Private", $"你在窥视后重新供奉了 {newOffer.GemCount} 张", player.Id);
         return AfterPlayerDecision(state, active);
     }
 
@@ -236,7 +218,7 @@ public sealed class PeekEffect : IArcanaEffect
     private static EffectApplicationResult AfterPlayerDecision(
         GameState state, ArcanaResolutionState active)
     {
-        if (active.ActorFinished && active.TargetFinished)
+        if (active is { ActorFinished: true, TargetFinished: true })
         {
             Finish(state);
             return EffectApplicationResult.Done();
@@ -246,7 +228,7 @@ public sealed class PeekEffect : IArcanaEffect
             ? state.FindPlayer(active.TargetPlayerIds[0])?.Name
             : state.FindPlayer(active.ActorId)?.Name;
         active.StepId = StepReOffer;
-        active.Prompt = $"等待 {(waiting ?? "对方")} 完成重供选择";
+        active.Prompt = $"等待 {waiting ?? "对方"} 完成重供选择";
         return EffectApplicationResult.NeedInput(StepReOffer, active.Prompt!);
     }
 
@@ -257,7 +239,9 @@ public sealed class PeekEffect : IArcanaEffect
     }
 }
 
-/// <summary>恶意置换：他玩家 1 祭品 ↔ 祭坛 1 槽。</summary>
+/// <summary>
+/// 恶意置换：交换 1 张祭坛牌与玩家祭品牌。
+/// </summary>
 public sealed class MaliciousSwapEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.MaliciousSwap;
@@ -276,9 +260,7 @@ public sealed class MaliciousSwapEffect : IArcanaEffect
 
         var targetP = state.FindPlayer(target.PlayerIds[0])!;
         var relic = targetP.Relics.FirstOrDefault(r => r.Id.Equals(target.CardIds[0]));
-        if (relic is null)
-            return EffectValidation.Fail(DomainErrorCodes.InvalidCards, "目标没有该祭品");
-        return EffectValidation.Success();
+        return relic is null ? EffectValidation.Fail(DomainErrorCodes.InvalidCards, "目标没有该祭品") : EffectValidation.Success();
     }
 
     public EffectApplicationResult Apply(GameState state, PlayerId actor, ArcanaTarget target)
@@ -291,19 +273,17 @@ public sealed class MaliciousSwapEffect : IArcanaEffect
         targetP.Relics.Remove(relic);
         state.Altar[slot] = relic;
         targetP.Relics.Add(altarCard);
-
-        // Traded flags: altar card newly held is not "traded successfully"
         targetP.RelicsTradedSuccessfully.Remove(relic.Id);
 
         var actorP = state.FindPlayer(actor)!;
-        state.Log(
-            "Arcana_MaliciousSwap",
-            $"{actorP.Name} 使用恶意置换，将 {targetP.Name} 的祭品与祭坛槽 {slot + 1} 互换");
+        state.Log("Arcana_MaliciousSwap", $"{actorP.Name} 使用恶意置换，将 {targetP.Name} 的祭品与祭坛槽 {slot + 1} 互换");
         return EffectApplicationResult.Done();
     }
 }
 
-/// <summary>精神干扰：令除自己外的目标重新选择供奉序号（改 Offer.Rank）。</summary>
+/// <summary>
+/// 精神干扰：令除自己外的目标重新选择供奉序号。
+/// </summary>
 public sealed class MentalInterferenceEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.MentalInterference;
@@ -317,9 +297,7 @@ public sealed class MentalInterferenceEffect : IArcanaEffect
             return EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "目标尚未供奉");
         if (target.Rank is null)
             return EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "需指定新序号");
-        if (!GameRules.IsValidRank(target.Rank.Value, state.PlayerCount))
-            return EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "无效序号");
-        return EffectValidation.Success();
+        return !GameRules.IsValidRank(target.Rank.Value, state.PlayerCount) ? EffectValidation.Fail(DomainErrorCodes.InvalidTarget, "无效序号") : EffectValidation.Success();
     }
 
     public EffectApplicationResult Apply(GameState state, PlayerId actor, ArcanaTarget target)
@@ -327,16 +305,18 @@ public sealed class MentalInterferenceEffect : IArcanaEffect
         var tid = target.PlayerIds[0];
         var offer = state.Offers[tid];
         offer.Rank = target.Rank!.Value;
+        // Rank was modified — any prior Spiritism public reveal is no longer valid.
+        offer.IsRankPublic = false;
         var actorP = state.FindPlayer(actor)!;
         var targetP = state.FindPlayer(tid)!;
-        state.Log(
-            "Arcana_MentalInterference",
-            $"{actorP.Name} 使用精神干扰了 {targetP.Name}！");
+        state.Log("Arcana_MentalInterference", $"{actorP.Name} 使用精神干扰了 {targetP.Name}！");
         return EffectApplicationResult.Done();
     }
 }
 
-/// <summary>巨力擒缚：从有宝石玩家手牌随机拿 1 宝石（R22）。</summary>
+/// <summary>
+/// 巨力擒缚：从有宝石玩家手牌随机拿 1 宝石。
+/// </summary>
 public sealed class MightyGraspEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.MightyGrasp;
@@ -350,14 +330,16 @@ public sealed class MightyGraspEffect : IArcanaEffect
         var actorP = state.FindPlayer(actor)!;
         var gem = state.TakeRandomGem(targetP)!;
         actorP.GemHand.Add(gem);
-        state.Log(
-            "Arcana_MightyGrasp",
-            $"{actorP.Name} 使用巨力擒缚，从 {targetP.Name} 手牌随机获得 1 张宝石");
+        state.Log("Arcana_MightyGrasp", $"{actorP.Name} 使用巨力擒缚，从 {targetP.Name} 手牌随机获得 1 张宝石");
+        state.Log("Private", $"你拿到了 {targetP.Name} 的宝石 {gem.Def.FaceValue}", actorP.Id);
+        state.Log("Private", $"你被 {actorP.Name} 拿走了宝石 {gem.Def.FaceValue}", targetP.Id);
         return EffectApplicationResult.Done();
     }
 }
 
-/// <summary>黑风术：全员顺时针交换供奉宝石（序号不变）。</summary>
+/// <summary>
+/// 黑风术：全员顺时针交换供奉的宝石牌。
+/// </summary>
 public sealed class BlackWindEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.BlackWind;
@@ -367,24 +349,15 @@ public sealed class BlackWindEffect : IArcanaEffect
 
     public EffectApplicationResult Apply(GameState state, PlayerId actor, ArcanaTarget target)
     {
-        // Seat order 0..n-1 clockwise: each player's gems go to next seat.
         var ordered = state.Players.OrderBy(p => p.SeatIndex).ToList();
-        var gemBags = ordered
-            .Select(p =>
-            {
-                if (state.Offers.TryGetValue(p.Id, out var o))
-                    return o.Gems.ToList();
-                return new List<CardInstance>();
-            })
-            .ToList();
+        var gemBags = ordered.Select(p => state.Offers.TryGetValue(p.Id, out var o) ? o.Gems.ToList() : []).ToList();
 
         for (var i = 0; i < ordered.Count; i++)
         {
-            var from = (i - 1 + ordered.Count) % ordered.Count; // receive from previous seat
+            var from = (i - 1 + ordered.Count) % ordered.Count;
             var player = ordered[i];
             if (!state.Offers.TryGetValue(player.Id, out var offer))
             {
-                // RULE-OPEN: player without offer — still create empty? skip receive if no offer
                 if (gemBags[from].Count == 0)
                     continue;
                 offer = new Offer { Rank = SequenceRank.I };
@@ -397,11 +370,21 @@ public sealed class BlackWindEffect : IArcanaEffect
 
         var actorP = state.FindPlayer(actor)!;
         state.Log("Arcana_BlackWind", $"{actorP.Name} 使用黑风术，全员顺时针交换供奉宝石");
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var from = (i - 1 + ordered.Count) % ordered.Count;
+            var oldSum = gemBags[i].Sum(g => g.Def.FaceValue);
+            var newSum = gemBags[from].Sum(g => g.Def.FaceValue);
+            var fromName = ordered[from].Name;
+            state.Log("Private", $"你之前供奉了宝石总和为 {oldSum}，现在是 {fromName} 的 {newSum}。", ordered[i].Id);
+        }
         return EffectApplicationResult.Done();
     }
 }
 
-/// <summary>人工选育：从堆拿 3 留 1（多步）。</summary>
+/// <summary>
+/// 人工选育：从宝石牌堆拿 3 张，保留 1 张。
+/// </summary>
 public sealed class ArtificialBreedingEffect : IArcanaEffect
 {
     public const string StepKeep = "Keep";
@@ -415,17 +398,15 @@ public sealed class ArtificialBreedingEffect : IArcanaEffect
     {
         var drawn = DrawPileService.Draw(state.GemDeck, state.GemDiscard, 3);
         var actorP = state.FindPlayer(actor)!;
-        if (drawn.Count == 0)
+        switch (drawn.Count)
         {
-            state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，牌堆已空");
-            return EffectApplicationResult.Done();
-        }
-
-        if (drawn.Count == 1)
-        {
-            actorP.GemHand.Add(drawn[0]);
-            state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，仅得 1 张并保留");
-            return EffectApplicationResult.Done();
+            case 0:
+                state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，牌堆已空");
+                return EffectApplicationResult.Done();
+            case 1:
+                actorP.GemHand.Add(drawn[0]);
+                state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，仅得 1 张并保留");
+                return EffectApplicationResult.Done();
         }
 
         state.ActiveArcana = new ArcanaResolutionState
@@ -436,7 +417,7 @@ public sealed class ArtificialBreedingEffect : IArcanaEffect
             Prompt = "从抽到的宝石中选择 1 张保留，其余弃置",
         };
         state.ActiveArcana.TempCards.AddRange(drawn);
-        state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，抽取 {drawn.Count} 张待选");
+        state.Log("Arcana_ArtificialBreeding", $"{actorP.Name} 使用人工选育，抽取 {drawn.Count} 张待选。");
         return EffectApplicationResult.NeedInput(StepKeep, state.ActiveArcana.Prompt!);
     }
 
@@ -460,20 +441,20 @@ public sealed class ArtificialBreedingEffect : IArcanaEffect
 
         var actorP = state.FindPlayer(active.ActorId)!;
         actorP.GemHand.Add(keep);
-        foreach (var c in active.TempCards)
-        {
-            if (!c.Id.Equals(keepId))
-                state.GemDiscard.Add(c);
-        }
+
+        var discardCards = active.TempCards.Where(c => !c.Id.Equals(keepId)).ToArray();
+        state.GemDiscard.AddRange(discardCards);
 
         active.TempCards.Clear();
         state.ActiveArcana = null;
-        state.Log("Arcana_ArtificialBreeding_Keep", $"{actorP.Name} 人工选育保留 1 张宝石，其余弃置");
+        state.Log("Arcana_ArtificialBreeding_Keep", $"{actorP.Name} 弃置了宝石 {string.Join("、", discardCards.Select(c => c.Def.FaceValue))}。");
         return EffectApplicationResult.Done();
     }
 }
 
-/// <summary>通灵术：猜目标供奉序号；对则施术者抽 3 宝石，错则目标从宝石牌堆抽 1（R23）。</summary>
+/// <summary>
+/// 通灵术：猜目标供奉序号；猜对则施术者从宝石堆抽 3 宝石，错则目标从宝石牌堆抽 1。
+/// </summary>
 public sealed class SpiritismEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.Spiritism;
@@ -496,24 +477,25 @@ public sealed class SpiritismEffect : IArcanaEffect
         var tid = target.PlayerIds[0];
         var actorP = state.FindPlayer(actor)!;
         var targetP = state.FindPlayer(tid)!;
-        var actual = state.Offers[tid].Rank;
+        var offer = state.Offers[tid];
+        var actual = offer.Rank;
         var guess = target.Rank!.Value;
 
         if (actual == guess)
         {
+            // Public knowledge until rank is modified (MentalInterference / re-offer / clear).
+            offer.IsRankPublic = true;
             var drawn = DrawPileService.Draw(state.GemDeck, state.GemDiscard, 3);
             actorP.GemHand.AddRange(drawn);
-            state.Log(
-                "Arcana_Spiritism",
-                $"{actorP.Name} 通灵术猜中 {targetP.Name} 的序号 {guess}，抽取 {drawn.Count} 张宝石");
+            state.Log("Arcana_Spiritism", $"{actorP.Name} 通灵术猜中 {targetP.Name} 的序号 {guess}，抽取 {drawn.Count} 张宝石");
+            state.Log("Private", $"你抽到了宝石 {string.Join("、", drawn.Select(c => c.Def.FaceValue))}。", actor);
         }
         else
         {
             var drawn = DrawPileService.Draw(state.GemDeck, state.GemDiscard, 1);
             targetP.GemHand.AddRange(drawn);
-            state.Log(
-                "Arcana_Spiritism",
-                $"{actorP.Name} 通灵术猜错（猜 {guess}，实为 {actual}），{targetP.Name} 从宝石牌堆抽取 {drawn.Count} 张");
+            state.Log("Arcana_Spiritism", $"{actorP.Name} 通灵术猜错（猜 {guess}，实为 {actual}），{targetP.Name} 从宝石牌堆抽取 {drawn.Count} 张");
+            state.Log("Private", $"你抽到了宝石 {string.Join("、", drawn.Select(c => c.Def.FaceValue))}。", targetP.Id);
         }
 
         return EffectApplicationResult.Done();
@@ -764,6 +746,5 @@ public static class ArcanaEffectRegistry
 
     public static bool IsEnabled(ArcanaKind kind) => CardCatalog.EnabledArcana.Contains(kind);
 
-    public static IArcanaEffect? Get(ArcanaKind kind) =>
-        Effects.TryGetValue(kind, out var e) ? e : null;
+    public static IArcanaEffect? Get(ArcanaKind kind) => Effects.GetValueOrDefault(kind);
 }

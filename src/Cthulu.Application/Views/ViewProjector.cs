@@ -133,6 +133,9 @@ public sealed class ViewProjector
                     ArcanaCount = p.ArcanaHand.Count,
                     OfferGemCount = offer?.GemCount ?? 0,
                     HasOffer = offer is not null,
+                    RevealedRank = offer is { IsRankPublic: true }
+                        ? offer.Rank.ToString()
+                        : null,
                     IsDealer = p.SeatIndex == game.DealerSeat,
                     IsCurrentActor = (isArcanaPhase || isTradePhase || isAuctionPhase)
                                      && p.SeatIndex == game.CurrentActorSeat,

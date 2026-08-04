@@ -124,6 +124,11 @@ public sealed class PlayerPublicView
     public int ArcanaCount { get; init; }
     public int OfferGemCount { get; init; }
     public bool HasOffer { get; init; }
+    /// <summary>
+    /// When set, this player's offer rank is public (Spiritism guessed correctly)
+    /// and should stay lit on the player card until modified.
+    /// </summary>
+    public string? RevealedRank { get; init; }
     public bool IsDealer { get; init; }
     public bool IsCurrentActor { get; init; }
     public IReadOnlyList<string> RelicKinds { get; init; } = Array.Empty<string>();

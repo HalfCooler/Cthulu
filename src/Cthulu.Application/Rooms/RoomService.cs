@@ -40,11 +40,13 @@ public sealed class RoomService
     public int ConfiguredMaxPlayers => ClampMaxPlayers(_options.MaxPlayers);
     public bool AllowDebugSeed => _options.AllowDebugSeed;
 
+    private static readonly string[] botNames = ["假人甲", "假人乙", "假人丙"];
+
     public CommandResult CreateRoom(string hostName, string connectionId)
     {
         var name = NormalizeName(hostName);
         if (name is null)
-            return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1–16 字）");
+            return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1 ~ 16 字）");
 
         var host = new RoomPlayer
         {
@@ -71,7 +73,7 @@ public sealed class RoomService
     {
         var name = NormalizeName(playerName);
         if (name is null)
-            return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1–16 字）");
+            return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1 ~ 16 字）");
 
         var room = _store.GetByCode(roomCode ?? string.Empty);
         if (room is null)
@@ -101,8 +103,7 @@ public sealed class RoomService
                 if (room.Game is not null)
                 {
                     var gs = room.Game.FindPlayer(existing.Id);
-                    if (gs is not null)
-                        gs.IsConnected = true;
+                    gs?.IsConnected = true;
                 }
 
                 return CommandResult.Success(new Dictionary<string, string>
@@ -216,7 +217,6 @@ public sealed class RoomService
             // Drop any leftover bots from a previous aborted start (should not happen).
             room.Players.RemoveAll(p => p.IsBot);
 
-            var botNames = new[] { "假人甲", "假人乙", "假人丙" };
             foreach (var botName in botNames)
             {
                 room.Players.Add(new RoomPlayer
@@ -248,12 +248,8 @@ public sealed class RoomService
             room.Mode = GameMode.Creative;
             ApplyBotFlags(room, state);
             PrepDayPipeline.StartGame(state);
-            state.Log(
-                "CreativeStart",
-                "创造模式开始：1 名真人 + 3 名人机（假人会自动跳过，必须选择时取选项前列）");
-            state.Log(
-                "SeatOrder",
-                "座位顺序（随机）：" + string.Join(" → ", seats.Select(s => s.Name)));
+            state.Log("CreativeStart", "创造模式开始：1 名真人 + 3 名人机。");
+            state.Log("SeatOrder", "座位顺序（随机）：" + string.Join(" → ", seats.Select(s => s.Name)));
             if (appliedSeed is int s)
                 state.Log("DebugSeed", $"调试固定种子已启用：{s}");
             room.Game = state;
@@ -267,7 +263,7 @@ public sealed class RoomService
         return WithGamePlayer(connectionId, (room, game, playerId) =>
         {
             if (!TryParseGemValue(gemValue, out var value))
-                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石面值（1–5）");
+                return CommandResult.Fail(ErrorCodes.InvalidCards, "无效宝石面值（1 ~ 5）");
 
             var result = ToCommand(CreativeModePipeline.AddGem(game, playerId, value));
             if (result.Ok)

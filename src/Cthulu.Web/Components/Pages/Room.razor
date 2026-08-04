@@ -999,7 +999,7 @@
                 var next = orderedPlayers[(i + 1) % orderedPlayers.Count];
                 var playerSel = interactive && _selectedPlayerIds.Contains(p.PlayerId);
                 <div class="players-circle-item" role="listitem">
-                    <div class="player-card @(p.IsSelf ? "self" : null) @(p.IsCurrentActor ? "actor" : null) @(playerSel ? "selected-player" : null) @(interactive ? null : "readonly")"
+                    <div class="player-card @(p.IsSelf ? "self" : null) @(p.IsCurrentActor ? "actor" : null) @(p.RevealedRank is not null ? "rank-revealed" : null) @(playerSel ? "selected-player" : null) @(interactive ? null : "readonly")"
                          @onclick="() => { if (interactive) TogglePlayer(p.PlayerId); }">
                         <div class="player-seat muted tiny">座 @p.SeatIndex</div>
                         <div class="player-name">
@@ -1017,6 +1017,12 @@
                                 <span class="badge self-badge">你</span>
                             }
                         </div>
+                        @if (p.RevealedRank is not null)
+                        {
+                            <div class="player-revealed-rank" title="通灵术猜中，序号已公开">
+                                <span class="rank-chip lit">序号 @p.RevealedRank</span>
+                            </div>
+                        }
                         @if (interactive)
                         {
                             <div class="player-counts">
