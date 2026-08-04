@@ -161,7 +161,7 @@ public static class PrepDayPipeline
         offer.Gems.AddRange(selected);
         state.Offers[playerId] = offer;
 
-        state.Log("OfferSubmit", $"{player.Name} 提交供奉（序号 {rank}，{offer.GemCount} 张宝石）");
+        state.Log("OfferSubmit", $"{player.Name} 提交供奉 {offer.GemCount} 张宝石");
 
         if (state.Offers.Count >= state.PlayerCount &&
             state.Players.All(p => state.Offers.ContainsKey(p.Id)))
@@ -364,6 +364,25 @@ public static class PrepDayPipeline
         state.Phase = GamePhase.Prep_Resolve;
         state.ActiveArcana = null;
 
+        // Snapshot offers before ResolveOffersToRelics clears Offers/Altar.
+        foreach (var player in state.Players)
+        {
+            if (!state.Offers.TryGetValue(player.Id, out var offer))
+            {
+                state.Log("PrepResolveDone", $"玩家 {player.Name} 未提交供奉");
+                continue;
+            }
+
+            var slot = GameRules.RankToSlotIndex(offer.Rank);
+            var relicName = slot >= 0 && slot < state.Altar.Count
+                ? RelicDisplay(state.Altar[slot])
+                : "（无）";
+
+            state.Log(
+                "PrepResolveDone",
+                $"玩家 {player.Name} 供奉的序号是 {offer.Rank}，祭品是 {relicName}，供奉了宝石总数是 {offer.GemCount}（sum={offer.Sum}）");
+        }
+
         ResolveOffersToRelics(state);
 
         state.Log("PrepResolveDone", $"第 {state.PrepDayNumber} 个筹备日结算完成");
@@ -402,7 +421,7 @@ public static class PrepDayPipeline
         if (dead.Count > 0)
         {
             var names = string.Join("、", dead.Select(id => state.FindPlayer(id)?.Name ?? "?"));
-            state.Log("DeadPlayers", $"死掉（同序号且同张数）：{names}");
+            state.Log("DeadPlayers", $"死掉（同序号且同 sum）：{names}");
         }
 
         for (var slot = 0; slot < state.Altar.Count; slot++)
@@ -468,12 +487,12 @@ public static class PrepDayPipeline
             p.HasActedArcana = false;
     }
 
-    /// <summary>R3: two+ players with same Rank AND same GemCount are dead.</summary>
+    /// <summary>R3: two+ players with same Rank AND same gem Sum are dead.</summary>
     public static HashSet<PlayerId> ComputeDeadPlayers(GameState state)
     {
         var dead = new HashSet<PlayerId>();
         var groups = state.Offers
-            .GroupBy(kv => (kv.Value.Rank, kv.Value.GemCount))
+            .GroupBy(kv => (kv.Value.Rank, kv.Value.Sum))
             .Where(g => g.Count() >= 2);
 
         foreach (var g in groups)

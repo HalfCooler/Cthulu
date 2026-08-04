@@ -18,6 +18,12 @@ public static class GameRules
     /// <summary>R10: full cycle segment is Prep×3 then Offering×1.</summary>
     public const int StandardPrepDaysPerCycle = 3;
 
+    /// <summary>
+    /// R10: the first N full cycles (Prep×3 + Offering×1 each) are mandatory;
+    /// VoteContinue only starts after this many cycles have been completed.
+    /// </summary>
+    public const int MandatoryCyclesBeforeVote = 2;
+
     /// <summary>R10: after majority-no vote, one last prep day then recovery.</summary>
     public const int FinalPrepDaysBeforeRecovery = 1;
 

@@ -114,6 +114,8 @@ public sealed class RelicItemView
     public required string InstanceId { get; init; }
     public required string Kind { get; init; }
     public required string DisplayName { get; init; }
+    /// <summary>Scoring / function blurb for hover tooltip.</summary>
+    public string Description { get; init; } = "";
     public bool TradedSuccessfully { get; init; }
 }
 
@@ -123,6 +125,8 @@ public sealed class AltarSlotView
     public string Rank { get; init; } = "";
     public string RelicKind { get; init; } = "";
     public string DisplayName { get; init; } = "";
+    /// <summary>Scoring / function blurb for hover tooltip.</summary>
+    public string Description { get; init; } = "";
     public bool ReverseThinking { get; init; }
     public bool EvilProphecy { get; init; }
 }
@@ -134,6 +138,8 @@ public sealed class CardView
     public string? Kind { get; init; }
     public int? FaceValue { get; init; }
     public required string DisplayName { get; init; }
+    /// <summary>Effect / scoring blurb for hover tooltip.</summary>
+    public string Description { get; init; } = "";
 }
 
 public sealed class MyOfferView
@@ -153,8 +159,11 @@ public sealed class LogEntryView
     /// <summary>Key lifecycle / scoring events for UI highlight.</summary>
     public bool Highlight { get; init; }
 
-    /// <summary>info | success | warn | danger — CSS class suffix.</summary>
+    /// <summary>info | success | warn | danger | private — CSS class suffix.</summary>
     public string Level { get; init; } = "info";
+
+    /// <summary>True when this line is a personal (only-self) log entry.</summary>
+    public bool IsPrivate { get; init; }
 }
 
 public sealed class ScorePreviewView
@@ -182,7 +191,10 @@ public sealed class ActiveArcanaView
     public bool IsActor { get; init; }
     public bool CanRespond { get; init; }
 
-    /// <summary>Peek: target's offer revealed only to peeker.</summary>
+    /// <summary>Peek: observer has finished their re-offer choice.</summary>
+    public bool IHaveFinished { get; init; }
+
+    /// <summary>Peek: one-shot reveal of target offer (only during Reveal step, actor only).</summary>
     public PeekedOfferView? PeekedOffer { get; init; }
 
     /// <summary>ArtificialBreeding / Transplant temp cards visible to actor.</summary>

@@ -17,9 +17,15 @@ public sealed class ArcanaResolutionState
     /// <summary>Temporary cards (drawn for ArtificialBreeding, taken for Transplant, etc.).</summary>
     public List<CardInstance> TempCards { get; } = new();
 
-    /// <summary>Peek: whether actor / target have finished re-offer step.</summary>
-    public bool ActorReoffered { get; set; }
-    public bool TargetReoffered { get; set; }
+    /// <summary>Peek: actor / target finished their re-offer choice (re-offer or skip).</summary>
+    public bool ActorFinished { get; set; }
+    public bool TargetFinished { get; set; }
+
+    /// <summary>Peek: rank string of the one-shot reveal snapshot (actor only until Acknowledge).</summary>
+    public string? PeekSnapshotRank { get; set; }
+
+    /// <summary>Peek: sum of the one-shot reveal snapshot.</summary>
+    public int PeekSnapshotSum { get; set; }
 
     public SequenceRank? GuessedRank { get; set; }
 

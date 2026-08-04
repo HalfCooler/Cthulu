@@ -373,7 +373,7 @@ public static class OfferingDayPipeline
     {
         if (state.Players.All(p => p.HasActedTrade))
         {
-            BeginVote(state);
+            OnOfferingDayComplete(state);
             return;
         }
 
@@ -389,6 +389,29 @@ public static class OfferingDayPipeline
             }
         }
 
+        OnOfferingDayComplete(state);
+    }
+
+    /// <summary>
+    /// After a full Prep×3 + Offering×1 cycle: first
+    /// <see cref="GameRules.MandatoryCyclesBeforeVote"/> cycles auto-continue;
+    /// only then enter VoteContinue.
+    /// </summary>
+    public static void OnOfferingDayComplete(GameState state)
+    {
+        state.ActiveTrade = null;
+
+        // CycleIndex is 0-based for the cycle just finished.
+        var completedCycles = state.CycleIndex + 1;
+        if (completedCycles < GameRules.MandatoryCyclesBeforeVote)
+        {
+            state.Log(
+                "CalendarAutoContinue",
+                $"第 {completedCycles} 个循环结束（强制 {GameRules.MandatoryCyclesBeforeVote} 轮），自动进入下一循环");
+            BeginNextStandardCycle(state);
+            return;
+        }
+
         BeginVote(state);
     }
 
@@ -402,7 +425,9 @@ public static class OfferingDayPipeline
             p.VoteYes = null;
         }
 
-        state.Log("VoteStart", "供奉日结束，投票是否继续下一循环（筹备×3+供奉×1）");
+        state.Log(
+            "VoteStart",
+            $"已完成 {state.CycleIndex + 1} 个循环，投票是否继续下一循环（筹备×3+供奉×1）");
     }
 
     public static DomainResult CastVote(GameState state, PlayerId playerId, bool yes)
@@ -441,23 +466,31 @@ public static class OfferingDayPipeline
             p.VoteYes = null;
         }
 
-        state.DealerSeat = state.NextSeat(state.DealerSeat);
-        state.Log("DealerRotate", $"庄家轮换为 {state.PlayerAtSeat(state.DealerSeat).Name}");
-
         if (majority)
         {
-            state.CycleIndex++;
-            state.PrepDaysRemainingInCycle = GameRules.StandardPrepDaysPerCycle;
-            state.NextSegmentIsRecovery = false;
-            state.Log("CalendarContinue", $"第 {state.CycleIndex + 1} 循环：筹备×3 + 供奉×1");
-            PrepDayPipeline.BeginPrepDay(state);
+            BeginNextStandardCycle(state);
         }
         else
         {
+            state.DealerSeat = state.NextSeat(state.DealerSeat);
+            state.Log("DealerRotate", $"庄家轮换为 {state.PlayerAtSeat(state.DealerSeat).Name}");
             state.PrepDaysRemainingInCycle = GameRules.FinalPrepDaysBeforeRecovery;
             state.NextSegmentIsRecovery = true;
             state.Log("CalendarFinalPrep", "多数不同意继续：筹备×1 后进入复苏日");
             PrepDayPipeline.BeginPrepDay(state);
         }
+    }
+
+    /// <summary>Rotate dealer and start the next Prep×3 + Offering×1 cycle.</summary>
+    public static void BeginNextStandardCycle(GameState state)
+    {
+        state.DealerSeat = state.NextSeat(state.DealerSeat);
+        state.Log("DealerRotate", $"庄家轮换为 {state.PlayerAtSeat(state.DealerSeat).Name}");
+
+        state.CycleIndex++;
+        state.PrepDaysRemainingInCycle = GameRules.StandardPrepDaysPerCycle;
+        state.NextSegmentIsRecovery = false;
+        state.Log("CalendarContinue", $"第 {state.CycleIndex + 1} 循环：筹备×3 + 供奉×1");
+        PrepDayPipeline.BeginPrepDay(state);
     }
 }

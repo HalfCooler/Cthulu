@@ -92,12 +92,61 @@ a:hover { text-decoration: underline; }
     gap: 1rem;
 }
 
+.nickname-panel {
+    margin-bottom: 1rem;
+}
+
+.nickname-hint {
+    margin: -0.5rem 0 0.85rem;
+}
+
+.nickname-display {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.nickname-value {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    min-height: 1.5rem;
+}
+
+.nickname-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.nickname-btn {
+    width: auto;
+    min-width: 6.5rem;
+}
+
+.nickname-msg {
+    margin: 0.75rem 0 0;
+    font-size: 0.85rem;
+}
+
+.create-hint {
+    margin: 0 0 1rem;
+}
+
+.create-hint strong {
+    color: var(--text);
+    font-weight: 700;
+}
+
 .lobby-foot {
     margin-top: 1.5rem;
     text-align: center;
 }
 
 .panel {
+    margin-bottom: 0.75rem;
     background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-panel-2) 100%);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -208,6 +257,35 @@ input:focus {
     background: rgba(124, 92, 255, 0.12);
     border-color: rgba(124, 92, 255, 0.35);
     color: #cfc3ff;
+}
+
+.alert-info.your-turn {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    background: rgba(62, 207, 142, 0.12);
+    border-color: rgba(62, 207, 142, 0.45);
+    color: #c8f5de;
+    box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.18), 0 8px 28px rgba(62, 207, 142, 0.08);
+    animation: your-turn-pulse 1.6s ease-in-out 2;
+}
+
+.your-turn-badge {
+    flex-shrink: 0;
+    display: inline-block;
+    margin-top: 0.05rem;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #0d1f16;
+    background: linear-gradient(135deg, #5ee4a8, #3ecf8e);
+}
+
+@keyframes your-turn-pulse {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.18), 0 8px 28px rgba(62, 207, 142, 0.08); }
+    50% { box-shadow: 0 0 0 2px rgba(62, 207, 142, 0.35), 0 10px 32px rgba(62, 207, 142, 0.16); }
 }
 
 .muted { color: var(--muted); }
@@ -482,9 +560,24 @@ input:focus {
     color: var(--warn);
 }
 
+.card.rank {
+    border-color: rgba(94, 186, 168, 0.55);
+    color: #9ee0d2;
+    background: rgba(94, 186, 168, 0.08);
+    cursor: default;
+}
+
 .card.arcana {
     border-color: rgba(124, 92, 255, 0.45);
     color: #cfc3ff;
+}
+
+.my-offer-row .card {
+    cursor: default;
+}
+
+.my-offer-row .card.gem {
+    background: rgba(240, 193, 75, 0.06);
 }
 
 .card.selected {
@@ -536,14 +629,52 @@ input:focus {
 
 .log-panel .log-header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
     margin-bottom: 0.65rem;
+    flex-wrap: wrap;
 }
 
 .log-panel .log-header h2 {
     margin: 0;
+}
+
+.log-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+}
+
+.btn-sm {
+    padding: 0.28rem 0.65rem;
+    font-size: 0.8rem;
+    border-radius: 6px;
+    width: auto;
+}
+
+.log-tts-btn {
+    flex-shrink: 0;
+    min-width: 4.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.28rem;
+}
+
+.log-tts-btn.speaking {
+    border-color: var(--accent);
+    color: #d4c8ff;
+    background: rgba(124, 92, 255, 0.14);
+    box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.25);
+}
+
+.log-tts-btn.voice-on {
+    border-color: rgba(62, 207, 142, 0.45);
+    color: #b8f0d4;
+    background: rgba(62, 207, 142, 0.12);
+    box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.2);
 }
 
 .log-panel .log-list {
@@ -589,6 +720,13 @@ input:focus {
     border-left: 3px solid var(--accent);
 }
 
+/* Personal log — only visible to the target player (blue). */
+.log-list .log-item.log-private {
+    background: rgba(61, 139, 253, 0.12);
+    border-left: 3px solid var(--accent-2);
+    color: #b8d4ff;
+}
+
 .log-time {
     color: var(--muted);
     margin-right: 0.25rem;
@@ -608,8 +746,10 @@ input:focus {
 .log-success .log-dot { background: var(--ok); }
 .log-warn .log-dot { background: var(--warn); }
 .log-danger .log-dot { background: var(--danger); }
+.log-private .log-dot { background: var(--accent-2); box-shadow: 0 0 6px rgba(61, 139, 253, 0.55); }
 
 .log-msg { flex: 1; min-width: 0; }
+.log-private .log-msg { color: #c9ddff; }
 
 /* Toast */
 .toast-host {
@@ -639,20 +779,41 @@ input:focus {
 
 .toast-error {
     color: #ffb4b4;
+    border-color: rgba(255, 107, 107, 0.45);
+    background: rgba(40, 18, 22, 0.96);
 }
+
+.toast-error .toast-title { color: #ff8a8a; }
+.toast-error .toast-msg { color: #ffe0e0; }
+
+.toast-turn {
+    color: #c8f5de;
+    border-color: rgba(62, 207, 142, 0.5);
+    background: rgba(14, 36, 28, 0.96);
+}
+
+.toast-turn .toast-title { color: #5ee4a8; }
+.toast-turn .toast-msg { color: #d8f8e8; }
+
+.toast-info {
+    color: #cfc3ff;
+    border-color: rgba(124, 92, 255, 0.45);
+    background: rgba(22, 18, 40, 0.96);
+}
+
+.toast-info .toast-title { color: #b8a6ff; }
+.toast-info .toast-msg { color: #e6e0ff; }
 
 .toast-title {
     display: block;
     font-size: 0.8rem;
     letter-spacing: 0.04em;
     margin-bottom: 0.2rem;
-    color: #ff8a8a;
 }
 
 .toast-msg {
     font-size: 0.92rem;
     line-height: 1.35;
-    color: #ffe0e0;
     word-break: break-word;
 }
 
@@ -856,6 +1017,56 @@ input:focus {
     opacity: 0.45;
     text-decoration: line-through;
     cursor: not-allowed;
+}
+
+/* Hover tooltips for altar / arcana / relic buttons */
+.has-tip {
+    position: relative;
+}
+
+.has-tip::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%) translateY(4px);
+    z-index: 40;
+    width: max-content;
+    max-width: min(18rem, 70vw);
+    padding: 0.45rem 0.65rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(18, 22, 31, 0.96);
+    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: left;
+    white-space: normal;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+}
+
+.has-tip:hover::after,
+.has-tip:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* Prefer below when near top of viewport (hand / altar mid-page still use above) */
+.hand-row .has-tip::after {
+    bottom: auto;
+    top: calc(100% + 8px);
+    transform: translateX(-50%) translateY(-4px);
+}
+
+.hand-row .has-tip:hover::after,
+.hand-row .has-tip:focus-visible::after {
+    transform: translateX(-50%) translateY(0);
 }
 
 .modal-panel {

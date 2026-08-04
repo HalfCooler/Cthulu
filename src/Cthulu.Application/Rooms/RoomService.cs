@@ -158,11 +158,6 @@ public sealed class RoomService
             if (!player.IsHost)
                 return CommandResult.Fail(ErrorCodes.Unauthorized, "仅房主可开始游戏");
 
-            var seats = room.Players
-                .OrderBy(p => p.SeatIndex)
-                .Select(p => (p.Id, p.Name, p.SeatIndex))
-                .ToList();
-
             IRandom rng;
             int? appliedSeed = null;
             if (debugSeed is int seed && _options.AllowDebugSeed)
@@ -175,13 +170,42 @@ public sealed class RoomService
                 rng = new SystemRandom();
             }
 
+            // Randomize seat order so turn order is not join order.
+            var seats = ShuffleSeats(room.Players, rng);
+
             var state = PrepDayPipeline.CreateGame(seats, rng);
             PrepDayPipeline.StartGame(state);
+            state.Log(
+                "SeatOrder",
+                "座位顺序（随机）：" + string.Join(" → ", seats.Select(s => s.Name)));
             if (appliedSeed is int s)
                 state.Log("DebugSeed", $"调试固定种子已启用：{s}");
             room.Game = state;
             return CommandResult.Success();
         });
+    }
+
+    /// <summary>
+    /// Fisher–Yates shuffle of lobby players; reassigns SeatIndex 0..n-1 and reorders the list.
+    /// </summary>
+    private static List<(PlayerId Id, string Name, int SeatIndex)> ShuffleSeats(
+        List<RoomPlayer> players,
+        IRandom rng)
+    {
+        var ordered = players.ToList();
+        for (var i = ordered.Count - 1; i > 0; i--)
+        {
+            var j = rng.Next(i + 1);
+            (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
+        }
+
+        for (var i = 0; i < ordered.Count; i++)
+            ordered[i].SeatIndex = i;
+
+        players.Clear();
+        players.AddRange(ordered);
+
+        return ordered.Select(p => (p.Id, p.Name, p.SeatIndex)).ToList();
     }
 
     public CommandResult SubmitOffer(

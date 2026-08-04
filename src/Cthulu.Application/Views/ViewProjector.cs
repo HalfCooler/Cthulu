@@ -136,6 +136,7 @@ public sealed class ViewProjector
                         InstanceId = r.Id.ToString(),
                         Kind = r.Def.RelicKind?.ToString() ?? "",
                         DisplayName = RelicName(r.Def.RelicKind),
+                        Description = RelicDescription(r.Def.RelicKind),
                         TradedSuccessfully = p.RelicsTradedSuccessfully.Contains(r.Id),
                     }).ToList(),
                     VirtualForbiddenKnowledge = p.VirtualForbiddenKnowledge,
@@ -155,6 +156,7 @@ public sealed class ViewProjector
                 Rank = GameRules.SlotIndexToRank(i).ToString(),
                 RelicKind = card.Def.RelicKind?.ToString() ?? "",
                 DisplayName = RelicName(card.Def.RelicKind),
+                Description = RelicDescription(card.Def.RelicKind),
                 ReverseThinking = game.AltarModifiers.HasReverse(i),
                 EvilProphecy = game.AltarModifiers.HasEvilProphecy(i),
             });
@@ -180,11 +182,16 @@ public sealed class ViewProjector
             };
         }
 
+        // Public entries for everyone; personal (VisibleTo) only for the matching observer.
         var log = game.EventLog
+            .Where(e => e.VisibleTo is null || e.VisibleTo.Value.Equals(observerId))
             .TakeLast(LogDisplayLimit)
             .Select(e =>
             {
-                var (highlight, level) = ClassifyLog(e.Code);
+                var isPrivate = e.IsPrivate;
+                var (highlight, level) = isPrivate
+                    ? (true, "private")
+                    : ClassifyLog(e.Code);
                 return new LogEntryView
                 {
                     Code = e.Code,
@@ -192,6 +199,7 @@ public sealed class ViewProjector
                     Timestamp = e.Timestamp.ToLocalTime().ToString("HH:mm:ss"),
                     Highlight = highlight,
                     Level = level,
+                    IsPrivate = isPrivate,
                 };
             })
             .ToList();
@@ -349,35 +357,54 @@ public sealed class ViewProjector
         var isActor = observerId.Equals(a.ActorId);
         var isTarget = a.TargetPlayerIds.Any(t => t.Equals(observerId));
 
+        // Peek: one-shot snapshot only during Reveal, only to the actor.
+        // After Ack the snapshot is cleared — peeker cannot keep viewing.
         PeekedOfferView? peeked = null;
-        if (a.Kind == ArcanaKind.Peek && isActor && a.TargetPlayerIds.Count > 0)
+        var isPeekReveal = a.Kind == ArcanaKind.Peek
+            && string.Equals(a.StepId, "Reveal", StringComparison.OrdinalIgnoreCase);
+        if (isPeekReveal && isActor && a.TargetPlayerIds.Count > 0 && a.PeekSnapshotRank is not null)
         {
             var tid = a.TargetPlayerIds[0];
             var tp = game.FindPlayer(tid);
-            if (tp is not null && game.Offers.TryGetValue(tid, out var offer))
+            peeked = new PeekedOfferView
             {
-                peeked = new PeekedOfferView
-                {
-                    TargetPlayerId = tid.ToString(),
-                    TargetName = tp.Name,
-                    Rank = offer.Rank.ToString(),
-                    Gems = offer.Gems.Select(ToCardView).ToList(),
-                    Sum = offer.Sum,
-                };
-            }
+                TargetPlayerId = tid.ToString(),
+                TargetName = tp?.Name ?? "?",
+                Rank = a.PeekSnapshotRank,
+                Gems = a.TempCards.Select(ToCardView).ToList(),
+                Sum = a.PeekSnapshotSum,
+            };
         }
 
-        var tempCards = isActor
+        // Breeding/Transplant temp cards stay on TempCards for actor; Peek uses them only as reveal snapshot.
+        var tempCards = isActor && a.Kind != ArcanaKind.Peek
             ? a.TempCards.Select(ToCardView).ToList()
             : new List<CardView>();
 
+        var iHaveFinished = a.Kind == ArcanaKind.Peek && (
+            (isActor && a.ActorFinished) || (isTarget && a.TargetFinished));
+
         var canRespond = a.Kind switch
         {
-            ArcanaKind.Peek => isActor || isTarget,
+            ArcanaKind.Peek when isPeekReveal => isActor,
+            ArcanaKind.Peek => (isActor || isTarget) && !iHaveFinished,
             ArcanaKind.ArtificialBreeding => isActor,
             ArcanaKind.Transplant => isActor,
             _ => isActor,
         };
+
+        var prompt = a.Prompt;
+        if (a.Kind == ArcanaKind.Peek)
+        {
+            if (isPeekReveal && !isActor)
+                prompt = $"{actor?.Name ?? "施术者"} 正在确认窥视结果......";
+            else if (!isPeekReveal && iHaveFinished)
+                prompt = "你已完成重供选择，等待对方......";
+            else if (!isPeekReveal && (isActor || isTarget))
+                prompt = "可重新供奉（先退回原宝石）或保持原供奉；双方都决定后秘术结束";
+            else if (!isPeekReveal)
+                prompt = "双方正在处理窥视后的重供选择......";
+        }
 
         return new ActiveArcanaView
         {
@@ -386,9 +413,10 @@ public sealed class ViewProjector
             ActorPlayerId = a.ActorId.ToString(),
             ActorName = actor?.Name ?? "?",
             StepId = a.StepId,
-            Prompt = a.Prompt,
+            Prompt = prompt,
             IsActor = isActor,
             CanRespond = canRespond,
+            IHaveFinished = iHaveFinished,
             PeekedOffer = peeked,
             TempCards = tempCards,
             TargetPlayerIds = a.TargetPlayerIds.Select(id => id.ToString()).ToList(),
@@ -493,7 +521,7 @@ public sealed class ViewProjector
             GamePhase.OfferingDay_Trade =>
                 $"等待 {game.CurrentActor?.Name ?? "他人"} 的交易行动…",
             GamePhase.VoteContinue when self is { HasVoted: false } =>
-                "投票：是否继续下一循环（筹备×3+供奉×1）？",
+                $"已完成 {game.CycleIndex + 1} 个循环，投票：是否继续下一循环（筹备×3+供奉×1）？",
             GamePhase.VoteContinue =>
                 $"已投票，等待他人…（{game.Players.Count(p => p.HasVoted)}/{game.PlayerCount}）",
             GamePhase.Recovery_Auction when game.ActiveAuction is { } auc && isMyTurn =>
@@ -533,6 +561,13 @@ public sealed class ViewProjector
                 CardType.Relic => RelicName(c.Def.RelicKind),
                 _ => c.Def.DisplayKey,
             },
+            Description = c.Def.Type switch
+            {
+                CardType.Gem => $"面值 {c.Def.FaceValue}，供奉时计入点数之和",
+                CardType.Arcana => ArcanaDescription(c.Def.ArcanaKind),
+                CardType.Relic => RelicDescription(c.Def.RelicKind),
+                _ => "",
+            },
         };
     }
 
@@ -553,13 +588,14 @@ public sealed class ViewProjector
     };
 
     /// <summary>Classify public log codes for UI highlight (desensitized already).</summary>
+    /// <remarks>Personal logs use level <c>private</c> (blue) and are assigned in ProjectGame, not here.</remarks>
     public static (bool Highlight, string Level) ClassifyLog(string code) => code switch
     {
         "GameStart" or "FinalScore" or "GameFinished" or "AllInResolve" => (true, "success"),
         "PrepResolveDone" or "RecoveryStart" or "CalendarContinue" or "CalendarFinalPrep" => (true, "warn"),
         "RelicWon" or "AuctionWon" or "TradeAccept" or "TradeForceSuccess" => (true, "success"),
         "RelicVoid" or "RelicTie" or "AuctionVoid" or "DeadPlayers" or "TradeForceFail" => (true, "danger"),
-        "VoteStart" or "VoteResult" or "DebugSeed" => (true, "warn"),
+        "VoteStart" or "VoteResult" or "DebugSeed" or "SeatOrder" => (true, "warn"),
         var c when c.StartsWith("Arcana_", StringComparison.Ordinal) => (true, "info"),
         _ => (false, "info"),
     };
@@ -602,5 +638,47 @@ public sealed class ViewProjector
         ArcanaKind.Fanaticism => "狂信",
         ArcanaKind.EvilProphecy => "邪恶预言",
         _ => kind?.ToString() ?? "秘术",
+    };
+
+    /// <summary>End-game scoring rule for a relic kind (hover tooltip).</summary>
+    public static string RelicDescription(RelicKind? kind) => kind switch
+    {
+        RelicKind.VisionEye => "终局计分：每凑齐 2 张得 10 分，奇数张不计分",
+        RelicKind.WeirdStatue => "终局计分：全场总计超过 3 张时每张 3 分，否则每张 7 分",
+        RelicKind.Necronomicon => "终局计分：持有时 +6 分（最多计 1 张）",
+        RelicKind.BrokenScript => "终局计分：每张 3 分",
+        RelicKind.Lantern => "终局计分：全场总计超过 3 张时每张 5 分，否则每张 2 分",
+        RelicKind.ObsidianCup => "终局计分：每张 1 分；持有数量最多者额外 +15（并列均得）",
+        RelicKind.BloodyBone => "终局计分：每张 4 分",
+        RelicKind.HolyMedium => "终局计分：每张 8 分",
+        RelicKind.RitualTool => "终局计分：每张 2 分；持有 ≥3 张时额外 +15",
+        RelicKind.ForbiddenKnowledge => "终局计分：1 张 −3 / 2 张 +9 / 3 张 −27 / 4 张及以上 0 分（含虚禁）",
+        _ => "祭品：终局按持有规则计分",
+    };
+
+    /// <summary>Play effect blurb for an arcana kind (hover tooltip).</summary>
+    public static string ArcanaDescription(ArcanaKind? kind) => kind switch
+    {
+        ArcanaKind.FishingNet => "抽取 2 张宝石",
+        ArcanaKind.Omniscient => "宝石少于 5 张的玩家各抽 1 张宝石",
+        ArcanaKind.RlyehFog => "指定 2 个祭坛槽位，互换其上的祭品",
+        ArcanaKind.StaffOfForgetting => "弃置指定祭坛槽位的祭品，并从牌堆补新",
+        ArcanaKind.FelReplenish => "秘术少于 2 张的玩家各摸 1 张秘术（不消耗本回合出牌）",
+        ArcanaKind.ReverseThinking => "指定 1 个祭坛槽位：该槽改为最低者得",
+        ArcanaKind.EvilProphecy => "指定 1 个祭坛槽位：其上 sum<4 的供奉无效",
+        ArcanaKind.Alchemy => "弃掉全部宝石手牌，再抽等量宝石",
+        ArcanaKind.Peek => "一次性查看一名其他玩家的供奉；随后双方可重供或保持",
+        ArcanaKind.MaliciousSwap => "将目标玩家的 1 张祭品与祭坛 1 个槽位互换",
+        ArcanaKind.MentalInterference => "令一名其他玩家重新选择供奉序号",
+        ArcanaKind.MightyGrasp => "从一名有宝石的玩家手中随机拿走 1 张宝石",
+        ArcanaKind.BlackWind => "全员顺时针交换供奉宝石（序号不变）",
+        ArcanaKind.ArtificialBreeding => "从牌堆拿 3 张宝石，保留 1 张",
+        ArcanaKind.Spiritism => "猜目标供奉序号：猜对自己抽 3 宝石，猜错目标抽 1 宝石",
+        ArcanaKind.KnowledgeErosion => "目标的虚拟禁忌知识 +1",
+        ArcanaKind.FearResonance => "指定 2 名有宝石的玩家，各随机丢弃 1 张宝石",
+        ArcanaKind.Transplant => "从 2 名有宝石玩家各拿 1 张随机宝石，再分别归还 1 张",
+        ArcanaKind.MindSuggestion => "任选 2 名玩家，交换他们的供奉宝石",
+        ArcanaKind.Fanaticism => "与目标交换全部宝石手牌",
+        _ => "打出以发动秘术效果",
     };
 }

@@ -55,13 +55,15 @@ internal static class ArcanaHelpers
 }
 
 /// <summary>
-/// 窥视：指定他玩家，查看其供奉后双方可重供奉（多步）。
-/// Steps: ReOffer (actor/target) → Done (actor ends).
+/// 窥视：查看目标供奉（一次性），随后双方各自选择重供或保持。
+/// Steps: Reveal (actor acknowledges) → ReOffer/Skip (each of actor & target once) → done.
 /// </summary>
 public sealed class PeekEffect : IArcanaEffect
 {
+    public const string StepReveal = "Reveal";
+    public const string StepAck = "Ack";
     public const string StepReOffer = "ReOffer";
-    public const string StepDone = "Done";
+    public const string StepSkip = "Skip";
 
     public ArcanaKind Kind => ArcanaKind.Peek;
 
@@ -80,16 +82,24 @@ public sealed class PeekEffect : IArcanaEffect
         var tid = target.PlayerIds[0];
         var actorP = state.FindPlayer(actor)!;
         var targetP = state.FindPlayer(tid)!;
-        state.ActiveArcana = new ArcanaResolutionState
+        var offer = state.Offers[tid];
+
+        var active = new ArcanaResolutionState
         {
             Kind = Kind,
             ActorId = actor,
-            StepId = StepReOffer,
-            Prompt = $"窥视 {targetP.Name} 的供奉；双方可重新供奉，施术者可结束",
+            StepId = StepReveal,
+            Prompt = $"你窥视了 {targetP.Name} 的供奉，请确认查看后进入重供阶段",
+            PeekSnapshotRank = offer.Rank.ToString(),
+            PeekSnapshotSum = offer.Sum,
         };
-        state.ActiveArcana.TargetPlayerIds.Add(tid);
+        active.TargetPlayerIds.Add(tid);
+        // Snapshot gem faces for one-shot reveal (display only; cards stay on offer).
+        active.TempCards.AddRange(offer.Gems);
+        state.ActiveArcana = active;
+
         state.Log("Arcana_Peek", $"{actorP.Name} 使用窥视，查看了 {targetP.Name} 的供奉");
-        return EffectApplicationResult.NeedInput(StepReOffer, state.ActiveArcana.Prompt!);
+        return EffectApplicationResult.NeedInput(StepReveal, active.Prompt!);
     }
 
     public EffectApplicationResult Continue(
@@ -105,67 +115,121 @@ public sealed class PeekEffect : IArcanaEffect
         if (!isActor && !isTarget)
             return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者与被窥视者可操作");
 
-        if (string.Equals(stepId, StepDone, StringComparison.OrdinalIgnoreCase))
+        // --- Reveal: actor must acknowledge; clear snapshot so peek cannot be re-viewed ---
+        if (string.Equals(stepId, StepAck, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(stepId, StepReveal, StringComparison.OrdinalIgnoreCase))
         {
+            if (!string.Equals(active.StepId, StepReveal, StringComparison.OrdinalIgnoreCase))
+                return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "窥视查看已结束");
             if (!isActor)
-                return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者可结束窥视");
-            Finish(state);
-            return EffectApplicationResult.Done();
+                return EffectApplicationResult.Fail(DomainErrorCodes.Unauthorized, "仅施术者可确认查看");
+
+            ClearPeekSnapshot(active);
+            active.StepId = StepReOffer;
+            active.Prompt = "双方可重新供奉或保持原供奉；两人都决定后秘术结束";
+            state.Log("Arcana_Peek_Ack", $"{state.FindPlayer(responder)!.Name} 确认窥视结果");
+            return EffectApplicationResult.NeedInput(StepReOffer, active.Prompt!);
+        }
+
+        // Re-offer phase only after reveal is closed
+        if (string.Equals(active.StepId, StepReveal, StringComparison.OrdinalIgnoreCase))
+            return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "请先确认窥视结果");
+
+        if (PlayerFinished(active, isActor))
+            return EffectApplicationResult.Fail(DomainErrorCodes.InvalidPhase, "你已结束重供选择");
+
+        if (string.Equals(stepId, StepSkip, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(stepId, "Done", StringComparison.OrdinalIgnoreCase))
+        {
+            MarkFinished(active, isActor);
+            var p = state.FindPlayer(responder)!;
+            state.Log("Arcana_Peek_Skip", $"{p.Name} 选择保持原供奉");
+            return AfterPlayerDecision(state, active);
         }
 
         if (!string.Equals(stepId, StepReOffer, StringComparison.OrdinalIgnoreCase))
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidTarget, "未知步骤");
 
-        // Re-offer: Rank + gem ids from hand (+ previous offer gems returned first)
+        // Re-offer: first return previous offer gems to hand, then submit from hand ∪ prior offer.
         if (target.Rank is null)
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidTarget, "请指定新序号");
         if (!GameRules.IsValidRank(target.Rank.Value, state.PlayerCount))
             return EffectApplicationResult.Fail(DomainErrorCodes.InvalidTarget, "无效序号");
         if (target.CardIds.Count == 0)
             return EffectApplicationResult.Fail(DomainErrorCodes.OfferIncomplete, "至少供奉 1 张宝石");
+        if (target.CardIds.Distinct().Count() != target.CardIds.Count)
+            return EffectApplicationResult.Fail(DomainErrorCodes.InvalidCards, "宝石不可重复");
 
         var player = state.FindPlayer(responder)!;
-        if (state.Offers.TryGetValue(responder, out var existing))
+        state.Offers.TryGetValue(responder, out var existing);
+
+        var pool = new Dictionary<CardInstanceId, CardInstance>();
+        foreach (var c in player.GemHand)
+            pool[c.Id] = c;
+        if (existing is not null)
+        {
+            foreach (var c in existing.Gems)
+                pool[c.Id] = c;
+        }
+
+        var selected = new List<CardInstance>(target.CardIds.Count);
+        foreach (var id in target.CardIds)
+        {
+            if (!pool.TryGetValue(id, out var card))
+                return EffectApplicationResult.Fail(
+                    DomainErrorCodes.InvalidCards, "只能从手牌或当前供奉中选择宝石");
+            selected.Add(card);
+        }
+
+        if (existing is not null)
         {
             player.GemHand.AddRange(existing.Gems);
             state.Offers.Remove(responder);
         }
 
-        var selected = new List<CardInstance>();
-        foreach (var id in target.CardIds)
-        {
-            var card = player.FindGem(id);
-            if (card is null)
-                return EffectApplicationResult.Fail(DomainErrorCodes.InvalidCards, "手牌中没有指定的宝石");
-            selected.Add(card);
-        }
-
-        if (selected.Select(c => c.Id).Distinct().Count() != selected.Count)
-            return EffectApplicationResult.Fail(DomainErrorCodes.InvalidCards, "宝石不可重复");
-
         foreach (var c in selected)
             player.GemHand.Remove(c);
 
-        var offer = new Offer { Rank = target.Rank.Value };
-        offer.Gems.AddRange(selected);
-        state.Offers[responder] = offer;
+        var newOffer = new Offer { Rank = target.Rank.Value };
+        newOffer.Gems.AddRange(selected);
+        state.Offers[responder] = newOffer;
 
-        if (isActor) active.ActorReoffered = true;
-        if (isTarget) active.TargetReoffered = true;
+        MarkFinished(active, isActor);
+        state.Log("Arcana_Peek_ReOffer", $"{player.Name} 在窥视后重新供奉了 {newOffer.GemCount} 张");
+        return AfterPlayerDecision(state, active);
+    }
 
-        state.Log("Arcana_Peek_ReOffer", $"{player.Name} 在窥视后重新供奉（序号 {offer.Rank}，{offer.GemCount} 张）");
+    private static bool PlayerFinished(ArcanaResolutionState active, bool isActor) =>
+        isActor ? active.ActorFinished : active.TargetFinished;
 
-        // Auto-finish when both have re-offered once
-        if (active.ActorReoffered && active.TargetReoffered)
+    private static void MarkFinished(ArcanaResolutionState active, bool isActor)
+    {
+        if (isActor) active.ActorFinished = true;
+        else active.TargetFinished = true;
+    }
+
+    private static void ClearPeekSnapshot(ArcanaResolutionState active)
+    {
+        active.TempCards.Clear();
+        active.PeekSnapshotRank = null;
+        active.PeekSnapshotSum = 0;
+    }
+
+    private static EffectApplicationResult AfterPlayerDecision(
+        GameState state, ArcanaResolutionState active)
+    {
+        if (active.ActorFinished && active.TargetFinished)
         {
             Finish(state);
             return EffectApplicationResult.Done();
         }
 
+        var waiting = active.ActorFinished
+            ? state.FindPlayer(active.TargetPlayerIds[0])?.Name
+            : state.FindPlayer(active.ActorId)?.Name;
         active.StepId = StepReOffer;
-        return EffectApplicationResult.NeedInput(
-            StepReOffer,
-            "可继续重供奉，或施术者结束窥视");
+        active.Prompt = $"等待 {(waiting ?? "对方")} 完成重供选择";
+        return EffectApplicationResult.NeedInput(StepReOffer, active.Prompt!);
     }
 
     private static void Finish(GameState state)
@@ -244,13 +308,12 @@ public sealed class MentalInterferenceEffect : IArcanaEffect
     {
         var tid = target.PlayerIds[0];
         var offer = state.Offers[tid];
-        var old = offer.Rank;
         offer.Rank = target.Rank!.Value;
         var actorP = state.FindPlayer(actor)!;
         var targetP = state.FindPlayer(tid)!;
         state.Log(
             "Arcana_MentalInterference",
-            $"{actorP.Name} 使用精神干扰，将 {targetP.Name} 的序号 {old} → {offer.Rank}");
+            $"{actorP.Name} 使用精神干扰了 {targetP.Name}！");
         return EffectApplicationResult.Done();
     }
 }
@@ -512,17 +575,22 @@ public sealed class TransplantEffect : IArcanaEffect
             Prompt = "分别选择 1 张宝石归还给两名目标（先选给目标1，再选给目标2）",
         };
 
+        var playerName = string.Empty;
+        
         foreach (var pid in target.PlayerIds)
         {
             var p = state.FindPlayer(pid)!;
             var gem = state.TakeRandomGem(p)!;
             state.ActiveArcana.TempCards.Add(gem);
             state.ActiveArcana.TargetPlayerIds.Add(pid);
+
+            playerName += p.Name;
+            playerName += " ";
         }
 
         state.Log(
             "Arcana_Transplant",
-            $"{actorP.Name} 使用移植，从两名玩家各取 1 张宝石，待归还");
+            $"{actorP.Name} 使用移植，从 {playerName} 各取 1 张宝石，待归还");
         return EffectApplicationResult.NeedInput(StepReturn, state.ActiveArcana.Prompt!);
     }
 

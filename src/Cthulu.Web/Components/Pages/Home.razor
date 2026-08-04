@@ -1,6 +1,7 @@
 @page "/"
 @inject GameClientService Game
 @inject NavigationManager Nav
+@inject IJSRuntime Js
 
 <PageTitle>克苏鲁之约</PageTitle>
 
@@ -10,14 +11,42 @@
         <p class="subtitle">由 Grok Build 倾情构建</p>
     </header>
 
+    <section class="panel nickname-panel">
+        <h2>我的昵称</h2>
+        <p class="muted tiny nickname-hint">创建或加入房间时使用；保存在本机浏览器。</p>
+        @if (_editingNickname)
+        {
+            <label class="field">
+                <span>新昵称</span>
+                <input @bind="_nicknameDraft"
+                       maxlength="16"
+                       placeholder="1 ~ 16 字"
+                       disabled="@_busy"
+                       @onkeydown="OnNicknameKeyDown" />
+            </label>
+            <div class="nickname-actions">
+                <button class="btn btn-primary nickname-btn" disabled="@_busy" @onclick="SaveNicknameAsync">保存</button>
+                <button class="btn btn-ghost nickname-btn" disabled="@_busy" @onclick="CancelEditNickname">取消</button>
+            </div>
+        }
+        else
+        {
+            <div class="nickname-display">
+                <span class="nickname-value">@(string.IsNullOrEmpty(_nickname) ? "（未设置）" : _nickname)</span>
+                <button class="btn btn-ghost nickname-btn" disabled="@_busy" @onclick="BeginEditNickname">更改昵称</button>
+            </div>
+        }
+        @if (!string.IsNullOrEmpty(_nicknameMessage))
+        {
+            <p class="muted nickname-msg">@_nicknameMessage</p>
+        }
+    </section>
+
     <div class="lobby-cards">
         <section class="panel">
             <h2>创建房间</h2>
-            <label class="field">
-                <span>你的昵称</span>
-                <input @bind="_createName" maxlength="16" placeholder="1 ~ 16 字" disabled="@_busy" />
-            </label>
-            <button class="btn btn-primary" disabled="@_busy" @onclick="CreateAsync">创建房间</button>
+            <p class="muted small create-hint">将以昵称 <strong>@(string.IsNullOrEmpty(_nickname) ? "（请先设置）" : _nickname)</strong> 创建并进入房间。</p>
+            <button class="btn btn-primary" disabled="@(_busy || string.IsNullOrWhiteSpace(_nickname))" @onclick="CreateAsync">创建房间</button>
         </section>
 
         <section class="panel">
@@ -26,11 +55,8 @@
                 <span>房间码</span>
                 <input @bind="_joinCode" maxlength="6" placeholder="6 位房间码" class="code-input" disabled="@_busy" />
             </label>
-            <label class="field">
-                <span>你的昵称</span>
-                <input @bind="_joinName" maxlength="16" placeholder="1 ~ 16 字" disabled="@_busy" />
-            </label>
-            <button class="btn btn-secondary" disabled="@_busy" @onclick="JoinAsync">加入房间</button>
+            <p class="muted small create-hint">将以昵称 <strong>@(string.IsNullOrEmpty(_nickname) ? "（请先设置）" : _nickname)</strong> 加入。</p>
+            <button class="btn btn-secondary" disabled="@(_busy || string.IsNullOrWhiteSpace(_nickname))" @onclick="JoinAsync">加入房间</button>
         </section>
     </div>
 
@@ -41,24 +67,137 @@
 </div>
 
 @code {
-    private string _createName = "";
-    private string _joinName = "";
+    private const string NicknameStorageKey = "cthulu.nickname";
+
+    private string _nickname = "";
+    private string _nicknameDraft = "";
     private string _joinCode = "";
     private string? _error;
+    private string? _nicknameMessage;
     private bool _busy;
+    private bool _editingNickname;
+    private bool _loaded;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _loaded)
+            return;
+
+        _loaded = true;
+        try
+        {
+            var saved = await Js.InvokeAsync<string?>("localStorage.getItem", NicknameStorageKey);
+            if (!string.IsNullOrWhiteSpace(saved))
+            {
+                _nickname = saved.Trim();
+                if (_nickname.Length > 16)
+                    _nickname = _nickname[..16];
+            }
+            else
+            {
+                // First visit: prompt to set a nickname.
+                _editingNickname = true;
+                _nicknameDraft = "";
+            }
+        }
+        catch
+        {
+            // localStorage may be unavailable (private mode / SSR edge); still allow typing.
+            _editingNickname = true;
+        }
+
+        StateHasChanged();
+    }
+
+    private void BeginEditNickname()
+    {
+        _nicknameDraft = _nickname;
+        _editingNickname = true;
+        _nicknameMessage = null;
+        _error = null;
+    }
+
+    private void CancelEditNickname()
+    {
+        _editingNickname = false;
+        _nicknameDraft = _nickname;
+        _nicknameMessage = null;
+    }
+
+    private async Task OnNicknameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SaveNicknameAsync();
+    }
+
+    private async Task SaveNicknameAsync()
+    {
+        var name = (_nicknameDraft ?? "").Trim();
+        if (name.Length is < 1 or > 16)
+        {
+            _nicknameMessage = "昵称需为 1–16 个字符";
+            return;
+        }
+
+        _busy = true;
+        _nicknameMessage = null;
+        try
+        {
+            await Js.InvokeVoidAsync("localStorage.setItem", NicknameStorageKey, name);
+            _nickname = name;
+            _editingNickname = false;
+            _nicknameMessage = "昵称已保存";
+        }
+        catch (Exception ex)
+        {
+            // Still apply in-session even if storage fails.
+            _nickname = name;
+            _editingNickname = false;
+            _nicknameMessage = $"已应用本会话，但无法写入浏览器存储：{ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
 
     private static string FormatFail(CommandResult result) =>
         string.IsNullOrEmpty(result.ErrorCode)
             ? (result.Message ?? "操作失败")
             : $"[{result.ErrorCode}] {result.Message ?? "操作失败"}";
 
+    private async Task EnsureNicknameSavedAsync()
+    {
+        var name = (_nickname ?? "").Trim();
+        if (name.Length is < 1 or > 16)
+            return;
+        try
+        {
+            await Js.InvokeVoidAsync("localStorage.setItem", NicknameStorageKey, name);
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+
     private async Task CreateAsync()
     {
+        var name = (_nickname ?? "").Trim();
+        if (name.Length is < 1 or > 16)
+        {
+            _error = "请先设置昵称（1–16 字）";
+            _editingNickname = true;
+            _nicknameDraft = name;
+            return;
+        }
+
         _busy = true;
         _error = null;
         try
         {
-            var result = await Game.CreateRoomAsync(_createName);
+            await EnsureNicknameSavedAsync();
+            var result = await Game.CreateRoomAsync(name);
             if (!result.Ok)
             {
                 _error = FormatFail(result);
@@ -86,11 +225,21 @@
 
     private async Task JoinAsync()
     {
+        var name = (_nickname ?? "").Trim();
+        if (name.Length is < 1 or > 16)
+        {
+            _error = "请先设置昵称（1–16 字）";
+            _editingNickname = true;
+            _nicknameDraft = name;
+            return;
+        }
+
         _busy = true;
         _error = null;
         try
         {
-            var result = await Game.JoinRoomAsync(_joinCode, _joinName);
+            await EnsureNicknameSavedAsync();
+            var result = await Game.JoinRoomAsync(_joinCode, name);
             if (!result.Ok)
             {
                 _error = FormatFail(result);

@@ -18,7 +18,10 @@ public sealed class GameState
     /// <summary>1-based counter of prep days started.</summary>
     public int PrepDayNumber { get; set; }
 
-    /// <summary>R10: which full Prep×3+Offering cycle we are in (0-based).</summary>
+    /// <summary>
+    /// R10: which full Prep×3+Offering cycle we are in (0-based).
+    /// VoteContinue is unlocked only after <see cref="GameRules.MandatoryCyclesBeforeVote"/> cycles complete.
+    /// </summary>
     public int CycleIndex { get; set; }
 
     /// <summary>
@@ -97,9 +100,24 @@ public sealed class GameState
     /// <summary>Soft cap so long matches do not unbounded-grow memory.</summary>
     public const int EventLogSoftCap = 250;
 
-    public void Log(string code, string message)
+    /// <summary>
+    /// Append a <b>public</b> log line visible to every player.
+    /// <paramref name="code"/> is a stable machine key (tooltip / CSS classify);
+    /// <paramref name="message"/> is the Chinese text shown in the UI.
+    /// </summary>
+    public void Log(string code, string message) =>
+        AppendLog(new GameEvent { Code = code, Message = message });
+
+    /// <summary>
+    /// Append a <b>personal</b> log line only <paramref name="visibleTo"/> can see (blue in UI).
+    /// Other players never receive this entry in their projected view.
+    /// </summary>
+    public void Log(string code, string message, PlayerId visibleTo) =>
+        AppendLog(new GameEvent { Code = code, Message = message, VisibleTo = visibleTo });
+
+    private void AppendLog(GameEvent entry)
     {
-        EventLog.Add(new GameEvent { Code = code, Message = message });
+        EventLog.Add(entry);
         if (EventLog.Count > EventLogSoftCap)
             EventLog.RemoveRange(0, EventLog.Count - EventLogSoftCap + 50);
     }
