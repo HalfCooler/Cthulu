@@ -37,6 +37,8 @@ public sealed class InMemoryGameRoomStore : IGameRoomStore
         return room;
     }
 
+    public IReadOnlyList<GameRoom> ListAll() => _byId.Values.ToList();
+
     public (RoomId RoomId, PlayerId PlayerId)? GetConnectionBinding(string connectionId)
     {
         if (_connections.TryGetValue(connectionId, out var binding))

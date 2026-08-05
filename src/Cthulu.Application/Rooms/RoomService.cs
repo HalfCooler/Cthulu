@@ -40,7 +40,7 @@ public sealed class RoomService
     public int ConfiguredMaxPlayers => ClampMaxPlayers(_options.MaxPlayers);
     public bool AllowDebugSeed => _options.AllowDebugSeed;
 
-    private static readonly string[] botNames = ["假人甲", "假人乙", "假人丙"];
+    private static readonly string[] BotNames = ["假人甲", "假人乙", "假人丙"];
 
     public CommandResult CreateRoom(string hostName, string connectionId)
     {
@@ -69,13 +69,51 @@ public sealed class RoomService
         });
     }
 
+    /// <summary>
+    /// Lobby rooms that still accept new seats (phase Lobby, not full).
+    /// Sorted by free seats descending, then code.
+    /// </summary>
+    public IReadOnlyList<RoomListItem> ListOpenRooms()
+    {
+        var maxPlayers = ConfiguredMaxPlayers;
+        var items = new List<RoomListItem>();
+
+        foreach (var room in _store.ListAll())
+        {
+            lock (room.SyncRoot)
+            {
+                if (room.Phase != GamePhase.Lobby)
+                    continue;
+
+                var count = room.Players.Count;
+                if (count >= maxPlayers)
+                    continue;
+
+                var host = room.FindById(room.HostId);
+                items.Add(new RoomListItem
+                {
+                    RoomCode = room.Code,
+                    HostName = host?.Name ?? "未知",
+                    PlayerCount = count,
+                    MaxPlayers = maxPlayers,
+                    IsJoinable = true,
+                });
+            }
+        }
+
+        return items
+            .OrderByDescending(r => r.MaxPlayers - r.PlayerCount)
+            .ThenBy(r => r.RoomCode, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public CommandResult JoinRoom(string roomCode, string playerName, string connectionId)
     {
         var name = NormalizeName(playerName);
         if (name is null)
             return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1 ~ 16 字）");
 
-        var room = _store.GetByCode(roomCode ?? string.Empty);
+        var room = _store.GetByCode(roomCode);
         if (room is null)
             return CommandResult.Fail(ErrorCodes.RoomNotFound, "房间不存在");
 
@@ -142,6 +180,103 @@ public sealed class RoomService
         }
     }
 
+    /// <summary>Lobby: toggle ready. While ready, nickname cannot be changed.</summary>
+    public CommandResult SetReady(string connectionId, bool ready)
+    {
+        return WithPlayer(connectionId, (room, player) =>
+        {
+            if (room.Phase != GamePhase.Lobby || room.Game is not null)
+                return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已开始，无法更改准备状态");
+
+            if (player.IsBot)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "人机席位无需准备");
+
+            player.IsReady = ready;
+            return CommandResult.Success(new Dictionary<string, string>
+            {
+                ["ready"] = ready ? "true" : "false",
+            });
+        });
+    }
+
+    /// <summary>Lobby rename while not ready. Updates seat name for all observers.</summary>
+    public CommandResult RenamePlayer(string connectionId, string newName)
+    {
+        return WithPlayer(connectionId, (room, player) =>
+        {
+            if (room.Phase != GamePhase.Lobby || room.Game is not null)
+                return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已开始，无法更改昵称");
+
+            if (player.IsReady)
+                return CommandResult.Fail(ErrorCodes.NotReady, "准备后不可更改昵称，请先取消准备");
+
+            var name = NormalizeName(newName);
+            if (name is null)
+                return CommandResult.Fail(ErrorCodes.InvalidName, "昵称不能为空（1 ~ 16 字）");
+
+            var existing = room.FindByName(name);
+            if (existing is not null && !existing.Id.Equals(player.Id))
+                return CommandResult.Fail(ErrorCodes.InvalidName, "该昵称已被占用");
+
+            player.Name = name;
+            return CommandResult.Success(new Dictionary<string, string>
+            {
+                ["name"] = name,
+            });
+        });
+    }
+
+    /// <summary>
+    /// Host kicks another lobby player. Returns the kicked connection id (if any) so the hub can notify them.
+    /// </summary>
+    public (CommandResult Result, string? KickedConnectionId) KickPlayer(
+        string connectionId,
+        string targetPlayerId)
+    {
+        string? kickedConnectionId = null;
+
+        var result = WithPlayer(connectionId, (room, host) =>
+        {
+            if (room.Phase != GamePhase.Lobby || room.Game is not null)
+                return CommandResult.Fail(ErrorCodes.InvalidPhase, "对局已开始，无法踢人");
+
+            if (!host.IsHost)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "仅房主可踢人");
+
+            if (!PlayerId.TryParse(targetPlayerId, out var targetId))
+                return CommandResult.Fail(ErrorCodes.InvalidTarget, "无效玩家");
+
+            if (targetId.Equals(host.Id))
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "不能踢出自己");
+
+            var target = room.FindById(targetId);
+            if (target is null)
+                return CommandResult.Fail(ErrorCodes.InvalidTarget, "玩家不在房间中");
+
+            if (target.IsBot)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "不能踢出人机席位");
+
+            if (target.IsHost)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "不能踢出房主");
+
+            kickedConnectionId = target.ConnectionId;
+            if (!string.IsNullOrEmpty(target.ConnectionId))
+                _store.UnbindConnection(target.ConnectionId);
+
+            room.Players.Remove(target);
+            for (var i = 0; i < room.Players.Count; i++)
+                room.Players[i].SeatIndex = i;
+
+            return CommandResult.Success(new Dictionary<string, string>
+            {
+                ["kickedPlayerId"] = target.Id.ToString(),
+                ["kickedName"] = target.Name,
+            });
+        });
+
+        return (result, kickedConnectionId);
+    }
+
     public CommandResult StartGame(string connectionId, int? debugSeed = null)
     {
         return WithPlayer(connectionId, (room, player) =>
@@ -162,6 +297,9 @@ public sealed class RoomService
 
             if (!player.IsHost)
                 return CommandResult.Fail(ErrorCodes.Unauthorized, "仅房主可开始游戏");
+
+            if (!AllHumansReady(room))
+                return CommandResult.Fail(ErrorCodes.NotReady, "所有玩家准备后才能开始游戏");
 
             IRandom rng;
             int? appliedSeed = null;
@@ -214,10 +352,13 @@ public sealed class RoomService
                     ErrorCodes.NotEnoughPlayers,
                     "创造模式需房主独自开局（将自动加入 3 名人机）");
 
+            if (!AllHumansReady(room))
+                return CommandResult.Fail(ErrorCodes.NotReady, "请先准备后再开始创造模式");
+
             // Drop any leftover bots from a previous aborted start (should not happen).
             room.Players.RemoveAll(p => p.IsBot);
 
-            foreach (var botName in botNames)
+            foreach (var botName in BotNames)
             {
                 room.Players.Add(new RoomPlayer
                 {
@@ -545,6 +686,31 @@ public sealed class RoomService
         });
     }
 
+    /// <summary>Broadcast a short chat line to everyone in the room (lobby + in-game).</summary>
+    public CommandResult SendChat(string connectionId, string text)
+    {
+        return WithPlayer(connectionId, (room, player) =>
+        {
+            if (player.IsBot)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "人机席位不可发言");
+
+            var normalized = NormalizeChatText(text);
+            if (normalized is null)
+                return CommandResult.Fail(
+                    ErrorCodes.InvalidMessage,
+                    $"消息不能为空（最多 {GameRoom.MaxChatTextLength} 字）");
+
+            room.AppendChat(new RoomChatMessage
+            {
+                PlayerId = player.Id,
+                PlayerName = player.Name,
+                Text = normalized,
+            });
+
+            return CommandResult.Success();
+        });
+    }
+
     public (CommandResult Result, RoomView? View) Sync(string connectionId)
     {
         var binding = _store.GetConnectionBinding(connectionId);
@@ -560,6 +726,26 @@ public sealed class RoomService
             var view = _projector.Project(room, binding.Value.PlayerId);
             return (CommandResult.Success(), view);
         }
+    }
+
+    private static string? NormalizeChatText(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var text = raw.Trim();
+        // Collapse internal runs of whitespace / newlines into single spaces.
+        text = string.Join(' ', text.Split(
+            (char[]?)null,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        if (text.Length == 0)
+            return null;
+
+        if (text.Length > GameRoom.MaxChatTextLength)
+            text = text[..GameRoom.MaxChatTextLength];
+
+        return text;
     }
 
     public IReadOnlyList<(string ConnectionId, RoomView View)> BuildViewsForPush(GameRoom room)
@@ -791,6 +977,9 @@ public sealed class RoomService
             sb.Append(CodeAlphabet[bytes[i] % CodeAlphabet.Length]);
         return sb.ToString();
     }
+
+    private static bool AllHumansReady(GameRoom room) =>
+        room.Players.Where(p => !p.IsBot).All(p => p.IsReady);
 
     private static string? NormalizeName(string? raw)
     {

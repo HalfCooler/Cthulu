@@ -52,6 +52,16 @@ public sealed class GameClientService(NavigationManager nav, ILogger<GameClientS
                         NotifyStateChanged();
                     });
 
+                    _hub.On<string>("Kicked", reason =>
+                    {
+                        CurrentView = null;
+                        RoomCode = null;
+                        SetErrorRaw("Kicked", string.IsNullOrWhiteSpace(reason)
+                            ? "你已被房主移出房间"
+                            : reason);
+                        NotifyStateChanged();
+                    });
+
                     _hub.Reconnected += async _ =>
                     {
                         try
@@ -160,6 +170,47 @@ public sealed class GameClientService(NavigationManager nav, ILogger<GameClientS
 
         NotifyStateChanged();
         return result;
+    }
+
+    /// <summary>Fetch lobby rooms that still have free seats.</summary>
+    public async Task<IReadOnlyList<RoomListItem>> ListOpenRoomsAsync()
+    {
+        await EnsureConnectedAsync();
+        var list = await _hub!.InvokeAsync<IReadOnlyList<RoomListItem>>("ListOpenRooms");
+        return list ?? Array.Empty<RoomListItem>();
+    }
+
+    public async Task<CommandResult> SetReadyAsync(bool ready)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("SetReady", ready);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> RenamePlayerAsync(string newName)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("RenamePlayer", newName);
+        if (result is { Ok: true })
+        {
+            var name = result.Data?.GetValueOrDefault("name") ?? newName.Trim();
+            DisplayName = name;
+            DismissError();
+        }
+        else
+        {
+            SetError(result);
+        }
+
+        NotifyStateChanged();
+        return result;
+    }
+
+    public async Task<CommandResult> KickPlayerAsync(string targetPlayerId)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("KickPlayer", targetPlayerId);
+        return Track(result);
     }
 
     public async Task<CommandResult> StartGameAsync(int? debugSeed = null)
@@ -348,6 +399,13 @@ public sealed class GameClientService(NavigationManager nav, ILogger<GameClientS
     {
         await EnsureConnectedAsync();
         var result = await _hub!.InvokeAsync<CommandResult>("SubmitAllInOffer", rank);
+        return Track(result);
+    }
+
+    public async Task<CommandResult> SendChatAsync(string text)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("SendChat", text);
         return Track(result);
     }
 

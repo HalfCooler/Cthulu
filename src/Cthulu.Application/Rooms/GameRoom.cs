@@ -8,6 +8,9 @@ public sealed class GameRoom
 {
     private readonly object _gate = new();
 
+    public const int ChatLogSoftCap = 100;
+    public const int MaxChatTextLength = 100;
+
     public RoomId Id { get; }
     public string Code { get; }
     public List<RoomPlayer> Players { get; } = new();
@@ -18,6 +21,9 @@ public sealed class GameRoom
 
     /// <summary>Null until StartGame. Source of truth for in-game phase.</summary>
     public GameState? Game { get; set; }
+
+    /// <summary>Room chat (lobby + in-game). Newest last.</summary>
+    public List<RoomChatMessage> ChatLog { get; } = new();
 
     public GameRoom(RoomId id, string code, RoomPlayer host)
     {
@@ -39,4 +45,11 @@ public sealed class GameRoom
     public RoomPlayer? FindByName(string name) =>
         Players.FirstOrDefault(p =>
             string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    public void AppendChat(RoomChatMessage message)
+    {
+        ChatLog.Add(message);
+        if (ChatLog.Count > ChatLogSoftCap)
+            ChatLog.RemoveRange(0, ChatLog.Count - ChatLogSoftCap + 20);
+    }
 }

@@ -114,23 +114,30 @@ public sealed class StaffOfForgettingEffect : IArcanaEffect
 
     public EffectApplicationResult Apply(GameState state, PlayerId actor, ArcanaTarget target)
     {
-        foreach (var slot in target.SlotIndices.Distinct().OrderByDescending(x => x))
+        var changes = new List<string>();
+        foreach (var slot in target.SlotIndices.Distinct().OrderBy(x => x))
         {
             var old = state.Altar[slot];
+            var oldName = PrepDayPipeline.RelicDisplay(old);
             state.RelicDiscard.Add(old);
             var drawn = DrawPileService.Draw(state.RelicDeck, state.RelicDiscard, 1);
             if (drawn.Count == 1)
+            {
                 state.Altar[slot] = drawn[0];
+                var newName = PrepDayPipeline.RelicDisplay(drawn[0]);
+                changes.Add($"槽{slot + 1} {oldName}→{newName}");
+            }
             else
             {
                 state.RelicDiscard.Remove(old);
                 state.Altar[slot] = old;
+                changes.Add($"槽{slot + 1} {oldName}（未刷新）");
             }
         }
 
         var name = state.FindPlayer(actor)!.Name;
-        var slots = string.Join("、", target.SlotIndices.Select(s => (s + 1).ToString()));
-        state.Log("Arcana_StaffOfForgetting", $"{name} 使用遗忘权杖，刷新祭坛槽 {slots}");
+        state.Log("Arcana_StaffOfForgetting",
+            $"{name} 使用遗忘权杖，刷新祭坛：{string.Join("、", changes)}");
         return EffectApplicationResult.Done();
     }
 }

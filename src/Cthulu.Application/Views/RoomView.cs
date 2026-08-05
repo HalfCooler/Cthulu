@@ -17,6 +17,15 @@ public sealed class RoomView
     public bool CanStartCreative { get; init; }
     /// <summary>True when host may open the debug seed field (Development config).</summary>
     public bool AllowDebugSeed { get; init; }
+    /// <summary>Observer is ready in lobby.</summary>
+    public bool SelfIsReady { get; init; }
+    /// <summary>Lobby only: may change nickname while not ready.</summary>
+    public bool CanRename { get; init; }
+    /// <summary>Humans who have clicked ready / total humans (lobby).</summary>
+    public int ReadyCount { get; init; }
+    public int HumanCount { get; init; }
+    /// <summary>All human seats are ready (lobby start gate).</summary>
+    public bool AllPlayersReady { get; init; }
     /// <summary>Standard or Creative (sandbox).</summary>
     public string GameMode { get; init; } = "Standard";
     public bool IsCreativeMode { get; init; }
@@ -41,6 +50,8 @@ public sealed class RoomView
     public IReadOnlyList<CardView> MyArcana { get; init; } = Array.Empty<CardView>();
     public MyOfferView? MyOffer { get; init; }
     public IReadOnlyList<LogEntryView> Log { get; init; } = Array.Empty<LogEntryView>();
+    /// <summary>Room chat (lobby + in-game). Chronological, oldest first.</summary>
+    public IReadOnlyList<ChatMessageView> Chat { get; init; } = Array.Empty<ChatMessageView>();
     public int GemDeckCount { get; init; }
     public int ArcanaDeckCount { get; init; }
     public int RelicDeckCount { get; init; }
@@ -119,6 +130,8 @@ public sealed class PlayerPublicView
     public required bool IsHost { get; init; }
     public required bool IsSelf { get; init; }
     public bool IsBot { get; init; }
+    /// <summary>Lobby ready status (ignored in-game).</summary>
+    public bool IsReady { get; init; }
 
     public int GemCount { get; init; }
     public int ArcanaCount { get; init; }
@@ -194,6 +207,16 @@ public sealed class LogEntryView
 
     /// <summary>True when this line is a personal (only-self) log entry.</summary>
     public bool IsPrivate { get; init; }
+}
+
+public sealed class ChatMessageView
+{
+    public required string Id { get; init; }
+    public required string PlayerId { get; init; }
+    public required string PlayerName { get; init; }
+    public required string Text { get; init; }
+    public required string Timestamp { get; init; }
+    public bool IsSelf { get; init; }
 }
 
 public sealed class ScorePreviewView

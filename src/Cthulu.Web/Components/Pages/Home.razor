@@ -60,6 +60,47 @@
         </section>
     </div>
 
+    <section class="panel room-browser">
+        <div class="room-browser-header">
+            <h2>可加入的房间</h2>
+            <button class="btn btn-ghost room-refresh-btn"
+                    disabled="@(_busy || _refreshing)"
+                    @onclick="RefreshRoomsAsync">
+                @(_refreshing ? "刷新中…" : "刷新")
+            </button>
+        </div>
+        <p class="muted small create-hint">自动列出仍在大厅且未满员的房间，点击即可加入。</p>
+
+        @if (_rooms is null)
+        {
+            <p class="muted tiny">正在搜索房间…</p>
+        }
+        else if (_rooms.Count == 0)
+        {
+            <p class="muted tiny">当前没有可加入的房间，可以创建一个，或手动输入房间码。</p>
+        }
+        else
+        {
+            <ul class="room-list">
+                @foreach (var room in _rooms)
+                {
+                    <li class="room-list-item">
+                        <div class="room-list-meta">
+                            <span class="room-list-code">@room.RoomCode</span>
+                            <span class="room-list-host">房主 @room.HostName</span>
+                            <span class="room-list-count">@room.PlayerCount / @room.MaxPlayers 人</span>
+                        </div>
+                        <button class="btn btn-secondary room-join-btn"
+                                disabled="@(_busy || string.IsNullOrWhiteSpace(_nickname) || !room.IsJoinable)"
+                                @onclick="() => JoinListedAsync(room.RoomCode)">
+                            加入
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
     @if (!string.IsNullOrEmpty(_error))
     {
         <div class="alert alert-error" role="alert">@_error</div>
@@ -77,6 +118,8 @@
     private bool _busy;
     private bool _editingNickname;
     private bool _loaded;
+    private bool _refreshing;
+    private IReadOnlyList<RoomListItem>? _rooms;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -107,6 +150,29 @@
         }
 
         StateHasChanged();
+        await RefreshRoomsAsync();
+    }
+
+    private async Task RefreshRoomsAsync()
+    {
+        if (_refreshing)
+            return;
+
+        _refreshing = true;
+        try
+        {
+            _rooms = await Game.ListOpenRoomsAsync();
+        }
+        catch (Exception ex)
+        {
+            _rooms = Array.Empty<RoomListItem>();
+            _error = $"搜索房间失败：{ex.Message}";
+        }
+        finally
+        {
+            _refreshing = false;
+            StateHasChanged();
+        }
     }
 
     private void BeginEditNickname()
@@ -223,7 +289,11 @@
         }
     }
 
-    private async Task JoinAsync()
+    private async Task JoinAsync() => await JoinWithCodeAsync(_joinCode);
+
+    private async Task JoinListedAsync(string roomCode) => await JoinWithCodeAsync(roomCode);
+
+    private async Task JoinWithCodeAsync(string roomCode)
     {
         var name = (_nickname ?? "").Trim();
         if (name.Length is < 1 or > 16)
@@ -234,19 +304,27 @@
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(roomCode))
+        {
+            _error = "请输入房间码，或从列表中选择房间";
+            return;
+        }
+
         _busy = true;
         _error = null;
         try
         {
             await EnsureNicknameSavedAsync();
-            var result = await Game.JoinRoomAsync(_joinCode, name);
+            var result = await Game.JoinRoomAsync(roomCode, name);
             if (!result.Ok)
             {
                 _error = FormatFail(result);
+                // Room may have filled or started; refresh browser list.
+                await RefreshRoomsAsync();
                 return;
             }
 
-            var code = result.Data?["roomCode"] ?? _joinCode.Trim().ToUpperInvariant();
+            var code = result.Data?["roomCode"] ?? roomCode.Trim().ToUpperInvariant();
             Nav.NavigateTo($"/room/{code}");
         }
         catch (Exception ex)

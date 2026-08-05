@@ -1,8 +1,25 @@
 @inherits LayoutComponentBase
+@inject IJSRuntime Js
 
 <div class="app-shell">
     <nav class="top-nav">
         <a class="brand" href="/">克苏鲁之约</a>
+        <button type="button"
+                class="theme-toggle"
+                @onclick="ToggleThemeAsync"
+                title="@(_theme == "yin" ? "切换到阳间模式" : "切换到阴间模式")"
+                aria-label="@(_theme == "yin" ? "当前阴间模式，点击切换到阳间模式" : "当前阳间模式，点击切换到阴间模式")">
+            @if (_theme == "yin")
+            {
+                <span class="theme-icon" aria-hidden="true">☾</span>
+                <span>阴间模式</span>
+            }
+            else
+            {
+                <span class="theme-icon" aria-hidden="true">☀</span>
+                <span>阳间模式</span>
+            }
+        </button>
     </nav>
     <main class="app-main">
         @Body
@@ -14,3 +31,50 @@
     <a href="" class="reload">重新加载</a>
     <a class="dismiss">🗙</a>
 </div>
+
+@code {
+    private string _theme = "yin";
+    private bool _synced;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _synced)
+            return;
+
+        try
+        {
+            var current = await Js.InvokeAsync<string>("cthuluTheme.get");
+            if ((current is "yin" or "yang") && current != _theme)
+            {
+                _theme = current;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // JS not ready or theme helper missing; keep default 阴间
+        }
+
+        _synced = true;
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        try
+        {
+            _theme = await Js.InvokeAsync<string>("cthuluTheme.toggle");
+        }
+        catch
+        {
+            _theme = _theme == "yin" ? "yang" : "yin";
+            try
+            {
+                await Js.InvokeVoidAsync("cthuluTheme.apply", _theme);
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+    }
+}

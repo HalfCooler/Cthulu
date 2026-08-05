@@ -27,6 +27,43 @@ public sealed class GameHub(RoomService rooms, ILogger<GameHub> logger) : Hub
         return result;
     }
 
+    /// <summary>Public lobby browser: rooms still accepting new players.</summary>
+    public Task<IReadOnlyList<RoomListItem>> ListOpenRooms() =>
+        Task.FromResult(rooms.ListOpenRooms());
+
+    public async Task<CommandResult> SetReady(bool ready)
+    {
+        var result = rooms.SetReady(Context.ConnectionId, ready);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> RenamePlayer(string newName)
+    {
+        var result = rooms.RenamePlayer(Context.ConnectionId, newName);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> KickPlayer(string targetPlayerId)
+    {
+        var (result, kickedConnectionId) = rooms.KickPlayer(Context.ConnectionId, targetPlayerId);
+        if (result.Ok)
+        {
+            // Remaining seats first, then notify the kicked client (no longer in room).
+            await PushRoomToAllAsync(Context.ConnectionId);
+            if (!string.IsNullOrEmpty(kickedConnectionId))
+            {
+                await Clients.Client(kickedConnectionId)
+                    .SendAsync("Kicked", "你已被房主移出房间");
+            }
+        }
+
+        return result;
+    }
+
     public async Task<CommandResult> StartGame(int? debugSeed = null)
     {
         var result = rooms.StartGame(Context.ConnectionId, debugSeed);
@@ -236,6 +273,14 @@ public sealed class GameHub(RoomService rooms, ILogger<GameHub> logger) : Hub
     public async Task<CommandResult> SubmitAllInOffer(string rank)
     {
         var result = rooms.SubmitAllInOffer(Context.ConnectionId, rank);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
+    public async Task<CommandResult> SendChat(string text)
+    {
+        var result = rooms.SendChat(Context.ConnectionId, text);
         if (result.Ok)
             await PushRoomToAllAsync(Context.ConnectionId);
         return result;

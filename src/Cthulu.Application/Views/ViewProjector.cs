@@ -50,27 +50,38 @@ public sealed class ViewProjector
                 IsHost = p.IsHost,
                 IsSelf = p.Id.Equals(observerId),
                 IsBot = p.IsBot,
+                IsReady = p.IsBot || p.IsReady,
             })
             .ToList();
 
         var isHost = self?.IsHost ?? false;
+        var selfIsReady = self?.IsReady ?? false;
         var humanCount = room.Players.Count(p => !p.IsBot);
+        var readyCount = room.Players.Count(p => !p.IsBot && p.IsReady);
+        var allReady = humanCount > 0 && readyCount == humanCount;
         var enough = room.Players.Count >= MinPlayers
                      && room.Players.Count <= MaxPlayers;
-        var canStart = room.Phase == GamePhase.Lobby && enough && isHost;
-        var canStartCreative = room.Phase == GamePhase.Lobby && isHost && humanCount == 1;
+        var canStart = room.Phase == GamePhase.Lobby && enough && isHost && allReady;
+        var canStartCreative = room.Phase == GamePhase.Lobby && isHost && humanCount == 1 && allReady;
+        var canRename = room.Phase == GamePhase.Lobby && self is { IsBot: false, IsReady: false };
 
         string hint;
-        if (humanCount < MinPlayers && !canStartCreative)
-            hint = $"等待玩家加入（至少 {MinPlayers} 人才能开始标准局，当前 {humanCount}；房主可单独开「创造模式」）";
+        if (!allReady)
+        {
+            hint = selfIsReady
+                ? $"已准备，等待其他玩家（{readyCount}/{humanCount}）"
+                : $"请先准备；准备前可改昵称。已准备 {readyCount}/{humanCount}";
+        }
+        else if (humanCount < MinPlayers && !canStartCreative)
+            hint = $"全员已准备。至少 {MinPlayers} 人才能开始标准局（当前 {humanCount}）；房主可单独开「创造模式」";
         else if (canStartCreative && !canStart)
             hint = isHost
-                ? "可单独启动「创造模式」（1 真人 + 3 人机），或等待更多玩家开始标准局"
-                : "等待房主开始";
+                ? "全员已准备。可单独启动「创造模式」（1 真人 + 3 人机），或等待更多玩家开始标准局"
+                : "全员已准备，等待房主开始";
         else if (!isHost)
-            hint = "人数已够，等待房主开始游戏";
+            hint = "全员已准备，等待房主开始游戏";
         else
-            hint = "人数已够，可点击「开始游戏」；或使用「创造模式」";
+            hint = "全员已准备，可点击「开始游戏」；或使用「创造模式」";
 
         return new RoomView
         {
@@ -86,11 +97,17 @@ public sealed class ViewProjector
             CanStart = canStart,
             CanStartCreative = canStartCreative,
             AllowDebugSeed = isHost && _options.AllowDebugSeed,
+            SelfIsReady = selfIsReady,
+            CanRename = canRename,
+            ReadyCount = readyCount,
+            HumanCount = humanCount,
+            AllPlayersReady = allReady,
             GameMode = room.Mode.ToString(),
             IsCreativeMode = room.Mode == GameMode.Creative,
             Players = players,
             Hint = hint,
             Log = Array.Empty<LogEntryView>(),
+            Chat = ProjectChat(room, observerId),
         };
     }
 
@@ -304,6 +321,7 @@ public sealed class ViewProjector
             MyArcana = myArcana,
             MyOffer = myOffer,
             Log = log,
+            Chat = ProjectChat(room, observerId),
             GemDeckCount = game.GemDeck.Count,
             ArcanaDeckCount = game.ArcanaDeck.Count,
             RelicDeckCount = game.RelicDeck.Count,
@@ -325,6 +343,23 @@ public sealed class ViewProjector
             IsFinished = isFinished,
             CreativeDeck = creativeDeck,
         };
+    }
+
+    private static IReadOnlyList<ChatMessageView> ProjectChat(GameRoom room, PlayerId observerId)
+    {
+        const int displayLimit = 50;
+        return room.ChatLog
+            .TakeLast(displayLimit)
+            .Select(m => new ChatMessageView
+            {
+                Id = m.Id,
+                PlayerId = m.PlayerId.ToString(),
+                PlayerName = m.PlayerName,
+                Text = m.Text,
+                Timestamp = m.Timestamp.ToLocalTime().ToString("HH:mm:ss"),
+                IsSelf = m.PlayerId.Equals(observerId),
+            })
+            .ToList();
     }
 
     private static CreativeDeckView ProjectCreativeDeck(GameState game)

@@ -35,4 +35,5 @@ public static class ErrorCodes
     public const string Unauthorized = "Unauthorized";
     public const string InvalidName = "InvalidName";
     public const string NotEnoughPlayers = "NotEnoughPlayers";
+    public const string InvalidMessage = "InvalidMessage";
 }

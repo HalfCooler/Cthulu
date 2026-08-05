@@ -507,21 +507,23 @@ public static class PrepDayPipeline
         return dead;
     }
 
-    private static string RelicDisplay(CardInstance card) =>
-        card.Def.RelicKind switch
-        {
-            RelicKind.VisionEye => "灵视眼瞳",
-            RelicKind.WeirdStatue => "诡异雕像",
-            RelicKind.Necronomicon => "死灵之书",
-            RelicKind.BrokenScript => "残缺咒文",
-            RelicKind.Lantern => "提灯",
-            RelicKind.ObsidianCup => "黑曜石酒杯",
-            RelicKind.BloodyBone => "沾血手骨",
-            RelicKind.HolyMedium => "神圣媒介",
-            RelicKind.RitualTool => "仪式用具",
-            RelicKind.ForbiddenKnowledge => "禁忌知识",
-            _ => card.Def.DisplayKey,
-        };
+    public static string RelicDisplayName(RelicKind? kind) => kind switch
+    {
+        RelicKind.VisionEye => "灵视眼瞳",
+        RelicKind.WeirdStatue => "诡异雕像",
+        RelicKind.Necronomicon => "死灵之书",
+        RelicKind.BrokenScript => "残缺咒文",
+        RelicKind.Lantern => "提灯",
+        RelicKind.ObsidianCup => "黑曜石酒杯",
+        RelicKind.BloodyBone => "沾血手骨",
+        RelicKind.HolyMedium => "神圣媒介",
+        RelicKind.RitualTool => "仪式用具",
+        RelicKind.ForbiddenKnowledge => "禁忌知识",
+        _ => kind?.ToString() ?? "祭品",
+    };
+
+    public static string RelicDisplay(CardInstance card) =>
+        RelicDisplayName(card.Def.RelicKind);
 
     public static string ArcanaDisplayName(ArcanaKind kind) => kind switch
     {

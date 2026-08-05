@@ -502,7 +502,9 @@ public sealed class SpiritismEffect : IArcanaEffect
     }
 }
 
-/// <summary>知识侵蚀：目标 VirtualForbiddenKnowledge += 1（R18）。</summary>
+/// <summary>
+/// 知识侵蚀：目标 VirtualForbiddenKnowledge += 1。
+/// </summary>
 public sealed class KnowledgeErosionEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.KnowledgeErosion;
@@ -522,7 +524,9 @@ public sealed class KnowledgeErosionEffect : IArcanaEffect
     }
 }
 
-/// <summary>恐惧共鸣：2 名有宝石玩家各随机丢 1 到手弃堆（R22）。</summary>
+/// <summary>
+/// 恐惧共鸣：2 名有宝石玩家各随机丢 1 到手弃堆。
+/// </summary>
 public sealed class FearResonanceEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.FearResonance;
@@ -537,11 +541,9 @@ public sealed class FearResonanceEffect : IArcanaEffect
         {
             var p = state.FindPlayer(pid)!;
             var gem = state.TakeRandomGem(p);
-            if (gem is not null)
-            {
-                state.GemDiscard.Add(gem);
-                names.Add(p.Name);
-            }
+            if (gem is null) continue;
+            state.GemDiscard.Add(gem);
+            names.Add(p.Name);
         }
 
         var actorP = state.FindPlayer(actor)!;
@@ -553,7 +555,7 @@ public sealed class FearResonanceEffect : IArcanaEffect
 }
 
 /// <summary>
-/// 移植：从 2 名有宝石玩家各拿 1 随机，再从这些+自己手牌中分别选 1 张交还（共 2 张，多步）。
+/// 移植：从 2 名有宝石玩家各拿 1 随机，再从这些 + 自己手牌中分别选 1 张交还。
 /// </summary>
 public sealed class TransplantEffect : IArcanaEffect
 {
@@ -652,7 +654,9 @@ public sealed class TransplantEffect : IArcanaEffect
     }
 }
 
-/// <summary>心灵暗示：任选 2 玩家交换供奉宝石。</summary>
+/// <summary>
+/// 心灵暗示：任选 2 玩家交换供奉宝石。
+/// </summary>
 public sealed class MindSuggestionEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.MindSuggestion;
@@ -691,7 +695,9 @@ public sealed class MindSuggestionEffect : IArcanaEffect
     }
 }
 
-/// <summary>狂信：与目标交换全部宝石手牌（R21）。</summary>
+/// <summary>
+/// 狂信：与目标交换全部宝石手牌。
+/// </summary>
 public sealed class FanaticismEffect : IArcanaEffect
 {
     public ArcanaKind Kind => ArcanaKind.Fanaticism;
@@ -716,7 +722,6 @@ public sealed class FanaticismEffect : IArcanaEffect
     }
 }
 
-/// <summary>Registry of all arcana effects (M1 + M2).</summary>
 public static class ArcanaEffectRegistry
 {
     private static readonly Dictionary<ArcanaKind, IArcanaEffect> Effects =

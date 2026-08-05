@@ -1,8 +1,10 @@
 @page "/room/{Code}"
 @implements IDisposable
+@using System.Text.Json
 @inject GameClientService Game
 @inject NavigationManager Nav
 @inject IJSRuntime Js
+@inject IWebHostEnvironment HostEnv
 
 <PageTitle>房间 @Code · 克苏鲁之约</PageTitle>
 
@@ -137,8 +139,50 @@
 
             @if (!inGame)
             {
+                <section class="panel lobby-nickname-panel">
+                    <h2>我的昵称</h2>
+                    @if (view.CanRename)
+                    {
+                        @if (_editingNickname)
+                        {
+                            <label class="field">
+                                <span>新昵称</span>
+                                <input @bind="_nicknameDraft"
+                                       maxlength="16"
+                                       placeholder="1 ~ 16 字"
+                                       disabled="@_busy"
+                                       @onkeydown="OnNicknameKeyDown" />
+                            </label>
+                            <div class="nickname-actions">
+                                <button class="btn btn-primary nickname-btn" disabled="@_busy" @onclick="SaveRoomNicknameAsync">保存</button>
+                                <button class="btn btn-ghost nickname-btn" disabled="@_busy" @onclick="CancelEditNickname">取消</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="nickname-display">
+                                <span class="nickname-value">@view.SelfName</span>
+                                <button class="btn btn-ghost nickname-btn" disabled="@_busy" @onclick="BeginEditNickname">更改昵称</button>
+                            </div>
+                            <p class="muted tiny">准备前可随时修改，会同步到房间并保存到本机浏览器。</p>
+                        }
+                    }
+                    else
+                    {
+                        <div class="nickname-display">
+                            <span class="nickname-value">@view.SelfName</span>
+                            <span class="badge ready-badge">已准备 · 不可改昵称</span>
+                        </div>
+                        <p class="muted tiny">取消准备后可再次修改昵称。</p>
+                    }
+                    @if (!string.IsNullOrEmpty(_nicknameMessage))
+                    {
+                        <p class="muted nickname-msg">@_nicknameMessage</p>
+                    }
+                </section>
+
                 <section class="panel">
-                    <h2>成员列表</h2>
+                    <h2>成员列表 <span class="muted small">准备 @view.ReadyCount / @view.HumanCount</span></h2>
                     @if (view.Players.Count == 0)
                     {
                         <p class="muted empty-hint">尚无成员（异常状态，请重新加入）</p>
@@ -150,7 +194,8 @@
                                 <tr>
                                     <th>座位</th>
                                     <th>昵称</th>
-                                    <th>状态</th>
+                                    <th>连接</th>
+                                    <th>准备</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -169,12 +214,41 @@
                                             {
                                                 <span class="badge bot-badge">人机</span>
                                             }
+                                            @if (p.IsSelf)
+                                            {
+                                                <span class="muted small">（你）</span>
+                                            }
                                         </td>
                                         <td>
                                             <span class="dot @(p.IsConnected ? "on" : "off")"></span>
                                             @(p.IsBot ? "人机" : (p.IsConnected ? "在线" : "离线"))
                                         </td>
-                                        <td>@(p.IsSelf ? "（你）" : "")</td>
+                                        <td>
+                                            @if (p.IsBot)
+                                            {
+                                                <span class="badge ready-badge">自动</span>
+                                            }
+                                            else if (p.IsReady)
+                                            {
+                                                <span class="badge ready-badge">已准备</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge not-ready-badge">未准备</span>
+                                            }
+                                        </td>
+                                        <td class="member-actions">
+                                            @if (view.IsHost && !p.IsSelf && !p.IsBot && !p.IsHost)
+                                            {
+                                                <button type="button"
+                                                        class="btn btn-ghost btn-sm kick-btn"
+                                                        disabled="@_busy"
+                                                        title="将 @p.Name 移出房间"
+                                                        @onclick="() => KickAsync(p.PlayerId, p.Name)">
+                                                    踢出
+                                                </button>
+                                            }
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -194,7 +268,24 @@
                     </section>
                 }
 
-                <div class="action-bar">
+                <div class="action-bar lobby-actions">
+                    @if (view.SelfIsReady)
+                    {
+                        <button class="btn btn-ghost"
+                                disabled="@_busy"
+                                @onclick="() => SetReadyAsync(false)">
+                            取消准备
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-secondary"
+                                disabled="@_busy"
+                                @onclick="() => SetReadyAsync(true)">
+                            准备
+                        </button>
+                    }
+
                     @if (view.IsHost)
                     {
                         <button class="btn btn-primary"
@@ -208,37 +299,44 @@
                                 @onclick="StartCreativeAsync">
                             创造模式
                         </button>
-                        @if (!view.CanStart && !view.CanStartCreative)
-                        {
-                            <span class="muted">
-                                @if (view.PlayerCount < view.MinPlayers)
-                                {
-                                    <text>至少 @view.MinPlayers 人才能开始标准局（当前 @view.PlayerCount）</text>
-                                }
-                                else
-                                {
-                                    <text>无法开始</text>
-                                }
-                            </span>
-                        }
-                        else if (!view.CanStart && view.CanStartCreative)
-                        {
-                            <span class="muted">标准局需 @view.MinPlayers 人；可点「创造模式」单人练习</span>
-                        }
                     }
-                    else
-                    {
-                        <span class="muted">
+
+                    <span class="muted">
+                        @if (!view.AllPlayersReady)
+                        {
+                            <text>需全员准备后才能开始（@view.ReadyCount / @view.HumanCount）</text>
+                        }
+                        else if (view.IsHost && !view.CanStart && view.CanStartCreative)
+                        {
+                            <text>标准局需 @view.MinPlayers 人；可点「创造模式」单人练习</text>
+                        }
+                        else if (view.IsHost && !view.CanStart && !view.CanStartCreative)
+                        {
                             @if (view.PlayerCount < view.MinPlayers)
                             {
-                                <text>等待更多玩家（至少 @view.MinPlayers 人）......</text>
+                                <text>至少 @view.MinPlayers 人才能开始标准局（当前 @view.PlayerCount）</text>
                             }
                             else
                             {
-                                <text>等待房主开始游戏......</text>
+                                <text>无法开始</text>
                             }
-                        </span>
-                    }
+                        }
+                        else if (!view.IsHost)
+                        {
+                            @if (view.PlayerCount < view.MinPlayers)
+                            {
+                                <text>全员已准备，等待更多玩家（至少 @view.MinPlayers 人）……</text>
+                            }
+                            else
+                            {
+                                <text>全员已准备，等待房主开始游戏……</text>
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(view.Hint))
+                        {
+                            @view.Hint
+                        }
+                    </span>
                 </div>
             }
             else if (!finished)
@@ -918,12 +1016,18 @@
             <div class="sidebar-log">
                 @RenderLogPanel(view)
             </div>
+
+            <div class="sidebar-chat">
+                @RenderChatPanel(view)
+            </div>
         </aside>
     }
 </div>
 
 @code {
     [Parameter] public string Code { get; set; } = "";
+
+    private const string NicknameStorageKey = "cthulu.nickname";
 
     private string _displayCode = "";
     private string _rejoinName = "";
@@ -938,13 +1042,32 @@
     private CancellationTokenSource? _toastCts;
     private string _debugSeedText = "";
 
+    private bool _editingNickname;
+    private string _nicknameDraft = "";
+    private string? _nicknameMessage;
+
     private bool _logSpeaking;
     private DotNetObjectReference<Room>? _ttsDotNetRef;
-    /// <summary>When true, speak「轮到你了！」on turn-needed edges.</summary>
+    /// <summary>When true: turn-action announce + new chat TTS.</summary>
     private bool _voiceNotifyEnabled;
     private bool _prevNeedsAction;
     private bool _actionNotifyPrimed;
     private const string VoiceNotifyStorageKey = "cthulu.voiceNotify";
+
+    /// <summary>After first snapshot, only chat ids not in this set are spoken.</summary>
+    private bool _chatVoicePrimed;
+    private readonly HashSet<string> _seenChatIds = new(StringComparer.Ordinal);
+
+    private string _chatDraft = "";
+    private bool _chatBusy;
+    private List<string> _chatPresets = new();
+    private bool _chatPresetsOpen;
+    private static readonly JsonSerializerOptions ChatPresetJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
 
     private readonly HashSet<string> _selectedGems = new(StringComparer.OrdinalIgnoreCase);
     private string _selectedRank = "I";
@@ -1172,7 +1295,9 @@
                     <span class="muted small">@view.Log.Count 条 · 新在上</span>
                     <button type="button"
                             class="btn btn-ghost btn-sm log-tts-btn @(_voiceNotifyEnabled ? "voice-on" : null)"
-                            title="@(_voiceNotifyEnabled ? "关闭轮到行动时的语音提醒" : "开启轮到行动时语音播报「轮到你了！」")"
+                            title="@(_voiceNotifyEnabled
+                                ? "关闭语音：行动提醒 + 新聊天播报"
+                                : "开启语音：轮到行动时提醒「轮到你了」，并播报新聊天「xxx说：xxx」")"
                             @onclick="ToggleVoiceNotifyAsync">
                         <span aria-hidden="true">@(_voiceNotifyEnabled ? "🔔" : "🔕")</span>
                         <span>语音@(_voiceNotifyEnabled ? "开" : "关")</span>
@@ -1222,16 +1347,95 @@
         </section>
     };
 
+    private RenderFragment RenderChatPanel(RoomView view) => __builder =>
+    {
+        <section class="panel chat-panel sidebar-chat-panel">
+            <div class="chat-header">
+                <h2>聊天室</h2>
+                <div class="chat-header-meta">
+                    <span class="muted small">@view.Chat.Count 条 · 新在上</span>
+                    @if (_voiceNotifyEnabled)
+                    {
+                        <span class="badge chat-voice-badge" title="语音已开：仅播报新到消息">语音播报</span>
+                    }
+                </div>
+            </div>
+            <ul class="chat-list">
+                @if (view.Chat.Count == 0)
+                {
+                    <li class="muted empty-hint">（还没有消息，发一条吧）</li>
+                }
+                else
+                {
+                    @foreach (var m in view.Chat.Reverse())
+                    {
+                        <li class="chat-item @(m.IsSelf ? "self" : null)">
+                            <span class="chat-time">@m.Timestamp</span>
+                            <span class="chat-name">@m.PlayerName</span>
+                            <span class="chat-text">@m.Text</span>
+                        </li>
+                    }
+                }
+            </ul>
+            <div class="chat-compose">
+                @if (_chatPresets.Count > 0)
+                {
+                    <div class="chat-quick-wrap">
+                        <button type="button"
+                                class="btn btn-ghost btn-sm chat-quick-btn"
+                                disabled="@_chatBusy"
+                                aria-expanded="@_chatPresetsOpen"
+                                aria-haspopup="listbox"
+                                title="快速发送"
+                                @onclick="ToggleChatPresets">
+                            快捷
+                        </button>
+                        @if (_chatPresetsOpen)
+                        {
+                            <ul class="chat-quick-menu" role="listbox" aria-label="预设消息">
+                                @foreach (var text in _chatPresets)
+                                {
+                                    <li role="option">
+                                        <button type="button"
+                                                class="chat-quick-item"
+                                                disabled="@_chatBusy"
+                                                @onclick="() => SendPresetAsync(text)">
+                                            @text
+                                        </button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
+                <input class="chat-input"
+                       @bind="_chatDraft"
+                       @bind:event="oninput"
+                       maxlength="100"
+                       placeholder="说点什么…"
+                       disabled="@_chatBusy"
+                       @onkeydown="OnChatKeyDown" />
+                <button type="button"
+                        class="btn btn-primary btn-sm chat-send-btn"
+                        disabled="@(_chatBusy || string.IsNullOrWhiteSpace(_chatDraft))"
+                        @onclick="() => SendChatTextAsync(_chatDraft)">
+                    发送
+                </button>
+            </div>
+        </section>
+    };
+
     protected override async Task OnInitializedAsync()
     {
         _displayCode = (Code ?? "").Trim().ToUpperInvariant();
         Game.OnChange += OnGameChanged;
+        LoadChatPresets();
 
         try
         {
             try
             {
-                var saved = await Js.InvokeAsync<string?>("localStorage.getItem", "cthulu.nickname");
+                var saved = await Js.InvokeAsync<string?>("localStorage.getItem", NicknameStorageKey);
                 if (!string.IsNullOrWhiteSpace(saved))
                 {
                     _rejoinName = saved.Trim();
@@ -1262,6 +1466,7 @@
 
             CaptureToastFromGame();
             MaybeNotifyYourTurn(Game.CurrentView);
+            MaybeSpeakNewChat(Game.CurrentView);
         }
         catch (Exception ex)
         {
@@ -1277,6 +1482,15 @@
     private void OnGameChanged()
     {
         var v = Game.CurrentView;
+
+        // Kicked / left: surface server reason on the rejoin panel as well as toast.
+        if (v is null && !string.IsNullOrEmpty(Game.LastError)
+            && Game.LastError.Contains("移出", StringComparison.Ordinal))
+        {
+            _error = Game.LastError;
+            _editingNickname = false;
+        }
+
         if (v is not null && v.Phase != "Prep_Offer" && v.Phase != "OfferingDay_Trade"
             && v.Phase != "Recovery_Auction"
             && v.ActiveArcana?.Kind != "Peek")
@@ -1303,6 +1517,7 @@
 
         CaptureToastFromGame();
         MaybeNotifyYourTurn(v);
+        MaybeSpeakNewChat(v);
         InvokeAsync(StateHasChanged);
     }
 
@@ -1409,6 +1624,10 @@
             /* ignore storage failures */
         }
 
+        // Turning voice on: mark current chat as already seen so history is not spoken.
+        if (_voiceNotifyEnabled)
+            MarkChatSeen(Game.CurrentView?.Chat);
+
         if (_voiceNotifyEnabled && NeedsYourAction(Game.CurrentView))
         {
             try
@@ -1419,6 +1638,111 @@
             {
                 /* ignore */
             }
+        }
+    }
+
+    /// <summary>
+    /// Speak only chat lines that arrived after the baseline snapshot.
+    /// Baseline is set on first view, and refreshed when voice is turned on.
+    /// </summary>
+    private void MaybeSpeakNewChat(RoomView? v)
+    {
+        if (v is null)
+        {
+            _chatVoicePrimed = false;
+            _seenChatIds.Clear();
+            return;
+        }
+
+        var chat = v.Chat;
+        if (!_chatVoicePrimed)
+        {
+            MarkChatSeen(chat);
+            _chatVoicePrimed = true;
+            return;
+        }
+
+        // Chronological (oldest first); only lines not yet marked.
+        var fresh = chat.Where(m => !string.IsNullOrEmpty(m.Id) && !_seenChatIds.Contains(m.Id)).ToList();
+        MarkChatSeen(chat);
+
+        if (!_voiceNotifyEnabled || fresh.Count == 0)
+            return;
+
+        _ = SpeakNewChatAsync(fresh);
+    }
+
+    private void MarkChatSeen(IReadOnlyList<ChatMessageView>? chat)
+    {
+        if (chat is null || chat.Count == 0)
+            return;
+
+        foreach (var m in chat)
+        {
+            if (!string.IsNullOrEmpty(m.Id))
+                _seenChatIds.Add(m.Id);
+        }
+
+        // Soft-cap: rebuild from current window if the set grows too large.
+        if (_seenChatIds.Count > 200)
+        {
+            _seenChatIds.Clear();
+            foreach (var m in chat)
+            {
+                if (!string.IsNullOrEmpty(m.Id))
+                    _seenChatIds.Add(m.Id);
+            }
+        }
+    }
+
+    private async Task SpeakNewChatAsync(IReadOnlyList<ChatMessageView> messages)
+    {
+        var lines = messages
+            .Select(m =>
+            {
+                var name = string.IsNullOrWhiteSpace(m.PlayerName) ? "有人" : m.PlayerName.Trim();
+                var text = (m.Text ?? "").Trim();
+                return string.IsNullOrEmpty(text) ? null : $"{name}说：{text}";
+            })
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Cast<string>()
+            .ToList();
+
+        if (lines.Count == 0)
+            return;
+
+        try
+        {
+            // Interrupt full-log TTS cleanly so the 播报 button state resets.
+            if (_logSpeaking)
+            {
+                try
+                {
+                    await Js.InvokeVoidAsync("cthuluTts.stop", true);
+                }
+                catch
+                {
+                    /* ignore */
+                }
+                _logSpeaking = false;
+            }
+
+            // Queue all new lines in order (does not attach log-TTS end callback).
+            var result = await Js.InvokeAsync<LogTtsResult>("cthuluTts.speak", lines, "zh-CN", (object?)null);
+            if (result is not null && !result.Ok)
+            {
+                // Soft fail — browser may block speech until a user gesture.
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (JSDisconnectedException)
+        {
+            /* ignore */
+        }
+        catch
+        {
+            /* ignore announce failures so UI stays quiet */
         }
     }
 
@@ -1561,6 +1885,85 @@
             _selectedArcanaId = a.InstanceId;
             _selectedArcanaKind = a.Kind;
         }
+    }
+
+    private void BeginEditNickname()
+    {
+        _nicknameDraft = Game.CurrentView?.SelfName ?? _rejoinName;
+        _editingNickname = true;
+        _nicknameMessage = null;
+        _error = null;
+    }
+
+    private void CancelEditNickname()
+    {
+        _editingNickname = false;
+        _nicknameDraft = Game.CurrentView?.SelfName ?? "";
+        _nicknameMessage = null;
+    }
+
+    private async Task OnNicknameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SaveRoomNicknameAsync();
+    }
+
+    private async Task SaveRoomNicknameAsync()
+    {
+        var name = (_nicknameDraft ?? "").Trim();
+        if (name.Length is < 1 or > 16)
+        {
+            _nicknameMessage = "昵称需为 1–16 个字符";
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            var result = await Game.RenamePlayerAsync(name);
+            if (result.Ok)
+            {
+                _editingNickname = false;
+                _nicknameMessage = "昵称已更新";
+                _rejoinName = name;
+                try
+                {
+                    await Js.InvokeVoidAsync("localStorage.setItem", NicknameStorageKey, name);
+                }
+                catch
+                {
+                    _nicknameMessage = "昵称已同步房间，但无法写入浏览器存储";
+                }
+            }
+            else
+            {
+                _nicknameMessage = result.Message ?? "改名失败";
+            }
+
+            return result;
+        });
+    }
+
+    private async Task SetReadyAsync(bool ready)
+    {
+        if (ready)
+        {
+            // Close nickname editor so ready state and UI stay consistent.
+            _editingNickname = false;
+            _nicknameMessage = null;
+        }
+
+        await RunAsync(() => Game.SetReadyAsync(ready));
+    }
+
+    private async Task KickAsync(string playerId, string playerName)
+    {
+        await RunAsync(async () =>
+        {
+            var result = await Game.KickPlayerAsync(playerId);
+            if (result.Ok)
+                ShowLocalToast($"已将 {playerName} 移出房间", "info", dismissMs: 3500);
+            return result;
+        });
     }
 
     private async Task StartAsync()
@@ -1880,6 +2283,90 @@
 
     private static CommandResult CommandResultFail() =>
         new() { Ok = false, Message = "客户端校验失败" };
+
+    private void LoadChatPresets()
+    {
+        try
+        {
+            var path = Path.Combine(HostEnv.WebRootPath, "chat-presets.json");
+            if (!File.Exists(path))
+                return;
+
+            var json = File.ReadAllText(path);
+            var list = JsonSerializer.Deserialize<List<string>>(json, ChatPresetJsonOptions);
+            if (list is null || list.Count == 0)
+                return;
+
+            _chatPresets = list
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim())
+                .ToList();
+        }
+        catch
+        {
+            // Missing / invalid presets file → hide quick-send only.
+            _chatPresets = new();
+        }
+    }
+
+    private void ToggleChatPresets()
+    {
+        _chatPresetsOpen = !_chatPresetsOpen;
+    }
+
+    private async Task SendPresetAsync(string text)
+    {
+        _chatPresetsOpen = false;
+        await SendChatTextAsync(text);
+    }
+
+    private async Task OnChatKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" && !e.ShiftKey)
+            await SendChatTextAsync(_chatDraft);
+    }
+
+    private async Task SendChatTextAsync(string? text)
+    {
+        if (_chatBusy)
+            return;
+
+        var payload = text?.Trim() ?? "";
+        if (payload.Length == 0)
+            return;
+
+        _chatPresetsOpen = false;
+        var fromDraft = string.Equals(payload, _chatDraft.Trim(), StringComparison.Ordinal);
+        _chatBusy = true;
+        try
+        {
+            var result = await Game.SendChatAsync(payload);
+            if (result.Ok)
+            {
+                if (fromDraft)
+                    _chatDraft = "";
+            }
+            else
+            {
+                CaptureToastFromGame();
+                if (string.IsNullOrEmpty(_toastText))
+                {
+                    var err = string.IsNullOrEmpty(result.ErrorCode)
+                        ? (result.Message ?? "发送失败")
+                        : $"[{result.ErrorCode}] {result.Message}";
+                    ShowLocalToast(err);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowLocalToast(ex.Message);
+        }
+        finally
+        {
+            _chatBusy = false;
+        }
+    }
 
     private async Task ToggleLogTtsAsync(RoomView view)
     {
