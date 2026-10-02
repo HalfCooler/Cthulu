@@ -62,6 +62,18 @@ public sealed class GameState
     public ArcanaResolutionState? ActiveArcana { get; set; }
 
     public List<GameEvent> EventLog { get; } = new();
+    public PrepSettlement? LastPrepSettlement { get; set; }
+    public Dictionary<PlayerId, PlayerAction> RecentActions { get; } = new();
+
+    public void RecordAction(PlayerId actorId, string publicMessage, IReadOnlyList<string>? publicDetails = null) =>
+        RecentActions[actorId] = new PlayerAction(PrepDayNumber, Phase, publicMessage,
+            publicDetails?.ToArray() ?? Array.Empty<string>());
+
+    public void LogAction(PlayerId actorId, string code, string publicMessage)
+    {
+        RecordAction(actorId, publicMessage);
+        Log(code, publicMessage);
+    }
 
     public int PlayerCount => Players.Count;
 

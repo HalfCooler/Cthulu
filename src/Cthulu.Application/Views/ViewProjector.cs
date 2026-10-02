@@ -136,10 +136,15 @@ public sealed class ViewProjector
             .Select(p =>
             {
                 var roomPlayer = room.FindById(p.Id);
+                game.RecentActions.TryGetValue(p.Id, out var recentAction);
                 game.Offers.TryGetValue(p.Id, out var offer);
                 return new PlayerPublicView
                 {
                     PlayerId = p.Id.ToString(),
+                    RecentAction = recentAction?.Message,
+                    RecentActionDetails = recentAction?.Details ?? Array.Empty<string>(),
+                    RecentActionContext = recentAction is null ? null
+                        : $"第 {recentAction.DayNumber} 天 · {PhaseDisplayName(recentAction.Phase)}",
                     Name = p.Name,
                     SeatIndex = p.SeatIndex,
                     IsConnected = roomPlayer?.IsConnected ?? p.IsConnected,
@@ -304,8 +309,10 @@ public sealed class ViewProjector
             Players = players,
             Hint = BuildHint(game, isMyTurn, hasOffer, isOfferPhase, selfState),
             PrepDayNumber = game.PrepDayNumber,
+            LastPrepSettlement = ProjectSettlement(room, game, observerId),
             CycleIndex = game.CycleIndex,
             PrepDaysRemainingInCycle = game.PrepDaysRemainingInCycle,
+            NextSegmentIsRecovery = game.NextSegmentIsRecovery,
             DealerName = dealer.Name,
             CurrentActorName = (isArcanaPhase || isTradePhase || isAuctionPhase) ? actor?.Name : null,
             CurrentActorPlayerId = (isArcanaPhase || isTradePhase || isAuctionPhase)
@@ -342,6 +349,33 @@ public sealed class ViewProjector
             HasSubmittedAllIn = isAllInPhase && hasOffer,
             IsFinished = isFinished,
             CreativeDeck = creativeDeck,
+        };
+    }
+
+    private static PrepSettlementView? ProjectSettlement(GameRoom room, GameState game, PlayerId observerId)
+    {
+        if (game.LastPrepSettlement is not { } receipt) return null;
+        var humans = room.Players.Where(p => !p.IsBot).ToList();
+        var waiting = humans.Where(p => !receipt.ConfirmedPlayers.Contains(p.Id)
+            && !receipt.SkippedPlayers.Contains(p.Id)).ToList();
+        var awaiting = game.Phase == GamePhase.Prep_Resolve;
+        return new PrepSettlementView
+        {
+            Id = receipt.Id,
+            DayNumber = receipt.DayNumber,
+            AwaitingConfirmation = awaiting,
+            HasConfirmed = receipt.ConfirmedPlayers.Contains(observerId) || receipt.SkippedPlayers.Contains(observerId),
+            HumanCount = humans.Count,
+            ConfirmedCount = humans.Count(p => receipt.ConfirmedPlayers.Contains(p.Id)),
+            SkippedCount = humans.Count(p => receipt.SkippedPlayers.Contains(p.Id) && !receipt.ConfirmedPlayers.Contains(p.Id)),
+            CanSkipDisconnected = awaiting && room.FindById(observerId)?.IsHost == true && waiting.Any(p => !p.IsConnected),
+            WaitingNames = waiting.Select(p => p.Name + (p.IsConnected ? "" : "（离线）")).ToArray(),
+            Slots = receipt.Slots.Select(s => new SettlementSlotView
+            {
+                Rank = s.Rank, RelicName = s.RelicName, Reverse = s.Reverse,
+                EvilProphecy = s.EvilProphecy, Outcome = s.Outcome,
+                Offers = s.Offers.Select(o => new SettlementOfferView(o.PlayerName, o.GemCount, o.Sum, o.Status)).ToArray(),
+            }).ToArray(),
         };
     }
 
@@ -628,7 +662,7 @@ public sealed class ViewProjector
                 "轮到你：打出 1 张秘术，或跳过",
             GamePhase.Prep_ArcanaTurn =>
                 $"等待 {game.CurrentActor?.Name ?? "他人"} 的秘术行动…",
-            GamePhase.Prep_Resolve => "结算中…",
+            GamePhase.Prep_Resolve => "本日已结算。可以慢慢查看供奉和祭品归属，所有玩家看完后继续。",
             GamePhase.Prep_Draw => "摸牌中…",
             GamePhase.OfferingDay_Trade when isMyTurn =>
                 "轮到你：发起交易或跳过",

@@ -39,7 +39,7 @@ public static class OfferingDayPipeline
             return DomainResult.Fail(DomainErrorCodes.InvalidPhase, "你本供奉日已行动过");
 
         player.HasActedTrade = true;
-        state.Log("TradePass", $"{player.Name} 跳过交易");
+        state.LogAction(playerId, "TradePass", $"{player.Name} 跳过交易");
         AdvanceTradeActor(state);
         return DomainResult.Success();
     }
@@ -107,9 +107,9 @@ public static class OfferingDayPipeline
         trade.BuyerEscrow.AddRange(gems);
         state.ActiveTrade = trade;
 
-        state.Log(
+        state.LogAction(buyerId,
             "TradePropose",
-            $"{buyer.Name} 向 {seller.Name} 发起交易（祭品，出价 {gems.Count} 张宝石）");
+            $"{buyer.Name} 向 {seller.Name} 求购「{PrepDayPipeline.RelicDisplay(relic)}」（出价 {gems.Count} 张宝石）");
         return DomainResult.Success();
     }
 
@@ -129,13 +129,14 @@ public static class OfferingDayPipeline
         if (accept)
         {
             CompleteSuccessfulTrade(state, trade, buyer, seller);
-            state.Log("TradeAccept", $"{seller.Name} 接受了 {buyer.Name} 的交易");
+            state.LogAction(sellerId, "TradeAccept", $"{seller.Name} 接受了 {buyer.Name} 的交易");
+            state.RecordAction(buyer.Id, $"{buyer.Name} 与 {seller.Name} 的交易已成交");
             FinishBuyerAction(state, buyer);
             return DomainResult.Success();
         }
 
         trade.SubPhase = TradeSubPhase.AwaitBuyerChoice;
-        state.Log("TradeReject", $"{seller.Name} 拒绝了交易，等待 {buyer.Name} 抉择");
+        state.LogAction(sellerId, "TradeReject", $"{seller.Name} 拒绝了交易，等待 {buyer.Name} 抉择");
         return DomainResult.Success();
     }
 
@@ -154,7 +155,7 @@ public static class OfferingDayPipeline
         buyer.GemHand.AddRange(trade.BuyerEscrow);
         trade.BuyerEscrow.Clear();
         state.ActiveTrade = null;
-        state.Log("TradeCancel", $"{buyer.Name} 选择原路返回，交易终止");
+        state.LogAction(buyerId, "TradeCancel", $"{buyer.Name} 选择原路返回，交易终止");
         FinishBuyerAction(state, buyer);
         return DomainResult.Success();
     }
@@ -216,7 +217,7 @@ public static class OfferingDayPipeline
         trade.SellerBidCommitted = false;
         trade.SellerEscrow.Clear();
 
-        state.Log("TradeForceBuy", $"{buyer.Name} 选择强买，双方提交暗价");
+        state.LogAction(buyerId, "TradeForceBuy", $"{buyer.Name} 选择强买，双方提交暗价");
         return DomainResult.Success();
     }
 
@@ -273,7 +274,7 @@ public static class OfferingDayPipeline
                 buyer.GemHand.Remove(g);
             trade.BuyerEscrow.AddRange(gems);
             trade.BuyerBidCommitted = true;
-            state.Log("TradeForceBid", $"{buyer.Name} 已提交强买暗价");
+            state.LogAction(buyer.Id, "TradeForceBid", $"{buyer.Name} 已提交强买暗价");
         }
         else
         {
@@ -301,7 +302,7 @@ public static class OfferingDayPipeline
                 seller.GemHand.Remove(g);
             trade.SellerEscrow.AddRange(gems);
             trade.SellerBidCommitted = true;
-            state.Log("TradeForceBid", $"{seller.Name} 已提交强买底价");
+            state.LogAction(seller.Id, "TradeForceBid", $"{seller.Name} 已提交强买底价");
         }
 
         if (trade.BuyerBidCommitted && trade.SellerBidCommitted)
@@ -316,6 +317,12 @@ public static class OfferingDayPipeline
         var seller = state.FindPlayer(trade.SellerId)!;
         var buyerSum = trade.BuyerEscrowSum;
         var sellerSum = trade.SellerEscrowSum;
+
+        var outcome = buyerSum >= sellerSum
+            ? $"{buyer.Name} 对 {seller.Name} 的强买成功，取得祭品"
+            : $"{buyer.Name} 对 {seller.Name} 的强买失败，出价宝石弃置";
+        state.RecordAction(buyer.Id, outcome);
+        state.RecordAction(seller.Id, outcome);
 
         if (buyerSum >= sellerSum)
         {
@@ -443,7 +450,7 @@ public static class OfferingDayPipeline
 
         player.HasVoted = true;
         player.VoteYes = yes;
-        state.Log("VoteCast", $"{player.Name} 投票：{(yes ? "继续" : "结束循环")}");
+        state.LogAction(playerId, "VoteCast", $"{player.Name} 投票：{(yes ? "继续" : "结束循环")}");
 
         if (state.Players.All(p => p.HasVoted))
             ResolveVote(state);

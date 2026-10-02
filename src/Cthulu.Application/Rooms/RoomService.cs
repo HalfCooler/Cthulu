@@ -525,6 +525,30 @@ public sealed class RoomService
             FinishGameCommand(room, PrepDayPipeline.ClearOffer(game, playerId)));
     }
 
+    public CommandResult ConfirmPrepSettlement(string connectionId, string settlementId, bool skipDisconnected)
+    {
+        return WithGamePlayer(connectionId, (room, game, playerId) =>
+        {
+            if (!skipDisconnected)
+                return FinishGameCommand(room, PrepDayPipeline.ConfirmPrepSettlement(game, playerId, settlementId));
+
+            if (room.FindById(playerId)?.IsHost != true)
+                return CommandResult.Fail(ErrorCodes.Unauthorized, "只有房主可以略过离线玩家");
+            var settlement = game.LastPrepSettlement;
+            if (game.Phase != GamePhase.Prep_Resolve || settlement is null || settlement.Id != settlementId)
+                return CommandResult.Fail(ErrorCodes.InvalidPhase, "该结算已结束，请查看当前桌面");
+
+            foreach (var player in room.Players.Where(p => !p.IsBot && !p.IsConnected))
+            {
+                if (!settlement.ConfirmedPlayers.Contains(player.Id) && settlement.SkippedPlayers.Add(player.Id))
+                    game.Log("SettlementSkip", $"房主略过了离线玩家 {player.Name} 的结算确认");
+            }
+            PrepDayPipeline.TryContinueAfterSettlement(game);
+            RunBots(room);
+            return CommandResult.Success();
+        });
+    }
+
     public CommandResult PassArcana(string connectionId)
     {
         return WithGamePlayer(connectionId, (room, game, playerId) =>

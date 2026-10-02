@@ -284,6 +284,13 @@ public sealed class GameClientService(NavigationManager nav, ILogger<GameClientS
         return Track(result);
     }
 
+    public async Task<CommandResult> ConfirmPrepSettlementAsync(string settlementId, bool skipDisconnected = false)
+    {
+        await EnsureConnectedAsync();
+        var result = await _hub!.InvokeAsync<CommandResult>("ConfirmPrepSettlement", settlementId, skipDisconnected);
+        return Track(result);
+    }
+
     public async Task<CommandResult> PassArcanaAsync()
     {
         await EnsureConnectedAsync();

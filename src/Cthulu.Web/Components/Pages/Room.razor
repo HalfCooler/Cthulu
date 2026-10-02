@@ -65,8 +65,8 @@
         <div class="room-main">
             <header class="room-header @(finished ? "finished-header" : null)">
                 <div class="room-meta room-meta-inline">
-                    <div>
-                        <span class="label">阶段</span>
+                    <span class="label">阶段</span>
+                    <span class="meta-value">
                         @view.PhaseDisplayName
                         @if (view.IsCreativeMode)
                         {
@@ -76,23 +76,31 @@
                         {
                             <span class="badge finished-badge">对局结束</span>
                         }
-                    </div>
+                    </span>
                     @if (inGame && !finished)
                     {
-                        <div><span class="label">筹备日</span> 第 @view.PrepDayNumber 天</div>
-                        <div><span class="label">循环</span> @(view.CycleIndex + 1) · 段内剩余 @view.PrepDaysRemainingInCycle</div>
-                        <div><span class="label">庄家</span> @(view.DealerName ?? "—")</div>
+                        <span class="label">第 @view.PrepDayNumber 天</span>
+                        <span class="meta-value">@DayKindName(view.Phase)</span>
+                        <span class="label">循环 @(view.CycleIndex + 1)</span>
+                        <span class="meta-value">剩余 @FormatSegmentRemaining(view)</span>
+                        <span class="label">庄家</span>
+                        <span class="meta-value">@(view.DealerName ?? "—")</span>
                     }
-                    <div><span class="label">人数</span> @view.PlayerCount / @view.MaxPlayers</div>
-                    <div><span class="label">你</span> @view.SelfName @(view.IsHost ? "（房主）" : "")</div>
+                    <span class="label">你</span>
+                    <span class="meta-value">@view.SelfName @(view.IsHost ? "（房主）" : "")</span>
                     @if (inGame)
                     {
-                        <div class="muted small deck-meta">
-                            牌堆：宝石 @view.GemDeckCount · 秘术 @view.ArcanaDeckCount · 祭品 @view.RelicDeckCount
-                        </div>
+                        <span class="label">牌堆剩余</span>
+                        <span class="meta-value muted small">宝石 @view.GemDeckCount · 秘术 @view.ArcanaDeckCount · 祭品 @view.RelicDeckCount</span>
                     }
                 </div>
             </header>
+
+            @if (view.LastPrepSettlement is { } receipt)
+            {
+                <SettlementPanel @key="receipt.Id" Receipt="receipt" Busy="_busy"
+                                 OnConfirm="ConfirmSettlementAsync" OnSkipDisconnected="SkipDisconnectedSettlementAsync" />
+            }
 
             @if (finished && view.ScorePreview is not null)
             {
@@ -372,6 +380,8 @@
                 </section>
 
                 @* Altar *@
+                @if (view.Phase != "Prep_Resolve")
+                {
                 <section class="panel">
                     <h2>祭坛 <span class="muted small">堆剩 @view.RelicDeckCount</span></h2>
                     <div class="altar-row">
@@ -407,6 +417,7 @@
                     </div>
                 </section>
 
+                }
                 @* Players (clockwise with seat arrows) *@
                 <section class="panel">
                     <div class="panel-title-row">
@@ -1048,11 +1059,16 @@
 
     private bool _logSpeaking;
     private DotNetObjectReference<Room>? _ttsDotNetRef;
-    /// <summary>When true: turn-action announce + new chat TTS.</summary>
-    private bool _voiceNotifyEnabled;
+    /// <summary>Chat panel: auto-speak new chat messages.</summary>
+    private bool _chatVoiceEnabled;
+    /// <summary>Log panel: announce when it is your turn to act.</summary>
+    private bool _logVoiceEnabled;
     private bool _prevNeedsAction;
     private bool _actionNotifyPrimed;
-    private const string VoiceNotifyStorageKey = "cthulu.voiceNotify";
+    private const string ChatVoiceStorageKey = "cthulu.chatVoice";
+    private const string LogVoiceStorageKey = "cthulu.logVoice";
+    /// <summary>Legacy combined switch; migrated into chat + log prefs once.</summary>
+    private const string LegacyVoiceNotifyStorageKey = "cthulu.voiceNotify";
 
     /// <summary>After first snapshot, only chat ids not in this set are spoken.</summary>
     private bool _chatVoicePrimed;
@@ -1062,6 +1078,7 @@
     private bool _chatBusy;
     private List<string> _chatPresets = new();
     private bool _chatPresetsOpen;
+    private string _theme = "yin";
     private static readonly JsonSerializerOptions ChatPresetJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -1088,6 +1105,45 @@
         "ForceBuyBids" => "强买暗价",
         _ => sub,
     };
+
+    /// <summary>Calendar day kind: 筹备日 / 供奉日 / 复苏日 (vote falls back to 投票).</summary>
+    private static string DayKindName(string phase) => phase switch
+    {
+        "OfferingDay_Trade" => "供奉日",
+        "VoteContinue" => "投票",
+        "Recovery_Auction" or "Recovery_AllIn" => "复苏日",
+        _ when phase.StartsWith("Prep_", StringComparison.Ordinal) => "筹备日",
+        _ => "—",
+    };
+
+    /// <summary>
+    /// Spell out remaining days in the current cycle segment
+    /// (e.g. 筹备日×2、供奉日), including the current day.
+    /// </summary>
+    private static string FormatSegmentRemaining(RoomView view)
+    {
+        if (view.Phase is "Recovery_Auction" or "Recovery_AllIn")
+            return "复苏日";
+
+        if (view.Phase == "VoteContinue")
+            return "—";
+
+        if (view.Phase == "OfferingDay_Trade")
+            return "供奉日";
+
+        // Prep (and any other in-segment phases): remaining prep days + tail day.
+        var parts = new List<string>();
+        var prepLeft = view.PrepDaysRemainingInCycle;
+        if (prepLeft > 0)
+            parts.Add(prepLeft == 1 ? "筹备日" : $"筹备日×{prepLeft}");
+
+        if (view.NextSegmentIsRecovery)
+            parts.Add("复苏日");
+        else
+            parts.Add("供奉日");
+
+        return parts.Count == 0 ? "—" : string.Join("、", parts);
+    }
 
     /// <summary>Hover tip for the offered rank chip: altar relic name + scoring rule.</summary>
     private static string BuildOfferRankTip(string rank, AltarSlotView? slot)
@@ -1140,6 +1196,23 @@
                                 <span class="badge self-badge">你</span>
                             }
                         </div>
+                        @if (p.RecentAction is not null)
+                        {
+                            <div class="player-recent-action">
+                                <span class="muted tiny">最近行动 · @p.RecentActionContext</span>
+                                <div>@p.RecentAction</div>
+                                @if (p.RecentActionDetails.Count > 0)
+                                {
+                                    <details @key="p.RecentAction" class="recent-action-details" @onclick:stopPropagation="true">
+                                        <summary>行动详情</summary>
+                                        @foreach (var detail in p.RecentActionDetails)
+                                        {
+                                            <p>@detail</p>
+                                        }
+                                    </details>
+                                }
+                            </div>
+                        }
                         @if (p.RevealedRank is not null)
                         {
                             <div class="player-revealed-rank" title="通灵术猜中，序号已公开">
@@ -1294,13 +1367,13 @@
                 <div class="log-header-meta">
                     <span class="muted small">@view.Log.Count 条 · 新在上</span>
                     <button type="button"
-                            class="btn btn-ghost btn-sm log-tts-btn @(_voiceNotifyEnabled ? "voice-on" : null)"
-                            title="@(_voiceNotifyEnabled
-                                ? "关闭语音：行动提醒 + 新聊天播报"
-                                : "开启语音：轮到行动时提醒「轮到你了」，并播报新聊天「xxx说：xxx」")"
-                            @onclick="ToggleVoiceNotifyAsync">
-                        <span aria-hidden="true">@(_voiceNotifyEnabled ? "🔔" : "🔕")</span>
-                        <span>语音@(_voiceNotifyEnabled ? "开" : "关")</span>
+                            class="btn btn-ghost btn-sm log-tts-btn @(_logVoiceEnabled ? "voice-on" : null)"
+                            title="@(_logVoiceEnabled
+                                ? "关闭事件日志语音：不再提醒「轮到你了」"
+                                : "开启事件日志语音：轮到你行动时提醒「轮到你了」")"
+                            @onclick="ToggleLogVoiceAsync">
+                        <span aria-hidden="true">@(_logVoiceEnabled ? "🔔" : "🔕")</span>
+                        <span>语音@(_logVoiceEnabled ? "开" : "关")</span>
                     </button>
                     <button type="button"
                             class="btn btn-ghost btn-sm log-tts-btn @(_logSpeaking ? "speaking" : null)"
@@ -1354,10 +1427,15 @@
                 <h2>聊天室</h2>
                 <div class="chat-header-meta">
                     <span class="muted small">@view.Chat.Count 条 · 新在上</span>
-                    @if (_voiceNotifyEnabled)
-                    {
-                        <span class="badge chat-voice-badge" title="语音已开：仅播报新到消息">语音播报</span>
-                    }
+                    <button type="button"
+                            class="btn btn-ghost btn-sm log-tts-btn @(_chatVoiceEnabled ? "voice-on" : null)"
+                            title="@(_chatVoiceEnabled
+                                ? "关闭聊天语音：不再播报新消息"
+                                : "开启聊天语音：新消息播报「xxx说：xxx」")"
+                            @onclick="ToggleChatVoiceAsync">
+                        <span aria-hidden="true">@(_chatVoiceEnabled ? "🔔" : "🔕")</span>
+                        <span>语音@(_chatVoiceEnabled ? "开" : "关")</span>
+                    </button>
                 </div>
             </div>
             <ul class="chat-list">
@@ -1378,36 +1456,37 @@
                 }
             </ul>
             <div class="chat-compose">
-                @if (_chatPresets.Count > 0)
-                {
-                    <div class="chat-quick-wrap">
-                        <button type="button"
-                                class="btn btn-ghost btn-sm chat-quick-btn"
-                                disabled="@_chatBusy"
-                                aria-expanded="@_chatPresetsOpen"
-                                aria-haspopup="listbox"
-                                title="快速发送"
-                                @onclick="ToggleChatPresets">
-                            快捷
-                        </button>
-                        @if (_chatPresetsOpen)
-                        {
-                            <ul class="chat-quick-menu" role="listbox" aria-label="预设消息">
+                <div class="chat-quick-wrap">
+                    <button type="button"
+                            class="btn btn-ghost btn-sm chat-quick-btn"
+                            disabled="@_chatBusy"
+                            aria-expanded="@_chatPresetsOpen"
+                            aria-haspopup="menu"
+                            title="快捷菜单"
+                            @onclick="ToggleChatPresets">
+                        快捷
+                    </button>
+                    @if (_chatPresetsOpen)
+                    {
+                        <ul class="chat-quick-menu" role="menu" aria-label="快捷菜单">
+                            @if (_chatPresets.Count > 0)
+                            {
                                 @foreach (var text in _chatPresets)
                                 {
-                                    <li role="option">
+                                    <li role="none">
                                         <button type="button"
                                                 class="chat-quick-item"
+                                                role="menuitem"
                                                 disabled="@_chatBusy"
                                                 @onclick="() => SendPresetAsync(text)">
                                             @text
                                         </button>
                                     </li>
                                 }
-                            </ul>
-                        }
-                    </div>
-                }
+                            }
+                        </ul>
+                    }
+                </div>
                 <input class="chat-input"
                        @bind="_chatDraft"
                        @bind:event="oninput"
@@ -1443,9 +1522,8 @@
                         _rejoinName = _rejoinName[..16];
                 }
 
-                var voicePref = await Js.InvokeAsync<string?>("localStorage.getItem", VoiceNotifyStorageKey);
-                _voiceNotifyEnabled = string.Equals(voicePref, "1", StringComparison.Ordinal)
-                    || string.Equals(voicePref, "true", StringComparison.OrdinalIgnoreCase);
+                await LoadVoicePrefsAsync();
+                await SyncThemeAsync();
             }
             catch
             {
@@ -1587,7 +1665,7 @@
             StateHasChanged();
         });
 
-        if (!_voiceNotifyEnabled)
+        if (!_logVoiceEnabled)
             return;
 
         try
@@ -1609,26 +1687,59 @@
         }
     }
 
-    private async Task ToggleVoiceNotifyAsync()
+    private static bool IsStorageTruthy(string? value) =>
+        string.Equals(value, "1", StringComparison.Ordinal)
+        || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+
+    private async Task LoadVoicePrefsAsync()
     {
-        _voiceNotifyEnabled = !_voiceNotifyEnabled;
+        string? chatPref = null;
+        string? logPref = null;
+        string? legacy = null;
         try
         {
-            await Js.InvokeVoidAsync(
-                "localStorage.setItem",
-                VoiceNotifyStorageKey,
-                _voiceNotifyEnabled ? "1" : "0");
+            chatPref = await Js.InvokeAsync<string?>("localStorage.getItem", ChatVoiceStorageKey);
+            logPref = await Js.InvokeAsync<string?>("localStorage.getItem", LogVoiceStorageKey);
+            legacy = await Js.InvokeAsync<string?>("localStorage.getItem", LegacyVoiceNotifyStorageKey);
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        var legacyOn = IsStorageTruthy(legacy);
+        _chatVoiceEnabled = chatPref is null ? legacyOn : IsStorageTruthy(chatPref);
+        _logVoiceEnabled = logPref is null ? legacyOn : IsStorageTruthy(logPref);
+    }
+
+    private async Task SetStorageBoolAsync(string key, bool value)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("localStorage.setItem", key, value ? "1" : "0");
         }
         catch
         {
             /* ignore storage failures */
         }
+    }
 
-        // Turning voice on: mark current chat as already seen so history is not spoken.
-        if (_voiceNotifyEnabled)
+    private async Task ToggleChatVoiceAsync()
+    {
+        _chatVoiceEnabled = !_chatVoiceEnabled;
+        await SetStorageBoolAsync(ChatVoiceStorageKey, _chatVoiceEnabled);
+
+        // Turning chat voice on: mark current chat as already seen so history is not spoken.
+        if (_chatVoiceEnabled)
             MarkChatSeen(Game.CurrentView?.Chat);
+    }
 
-        if (_voiceNotifyEnabled && NeedsYourAction(Game.CurrentView))
+    private async Task ToggleLogVoiceAsync()
+    {
+        _logVoiceEnabled = !_logVoiceEnabled;
+        await SetStorageBoolAsync(LogVoiceStorageKey, _logVoiceEnabled);
+
+        if (_logVoiceEnabled && NeedsYourAction(Game.CurrentView))
         {
             try
             {
@@ -1641,9 +1752,44 @@
         }
     }
 
+    private async Task SyncThemeAsync()
+    {
+        try
+        {
+            var current = await Js.InvokeAsync<string>("cthuluTheme.get");
+            if (current is "yin" or "yang")
+                _theme = current;
+        }
+        catch
+        {
+            // keep default 阴间
+        }
+    }
+
+    private async Task ToggleThemeFromQuickAsync()
+    {
+        _chatPresetsOpen = false;
+        try
+        {
+            _theme = await Js.InvokeAsync<string>("cthuluTheme.toggle");
+        }
+        catch
+        {
+            _theme = _theme == "yin" ? "yang" : "yin";
+            try
+            {
+                await Js.InvokeVoidAsync("cthuluTheme.apply", _theme);
+            }
+            catch
+            {
+                /* ignore */
+            }
+        }
+    }
+
     /// <summary>
     /// Speak only chat lines that arrived after the baseline snapshot.
-    /// Baseline is set on first view, and refreshed when voice is turned on.
+    /// Baseline is set on first view, and refreshed when chat voice is turned on.
     /// </summary>
     private void MaybeSpeakNewChat(RoomView? v)
     {
@@ -1666,7 +1812,7 @@
         var fresh = chat.Where(m => !string.IsNullOrEmpty(m.Id) && !_seenChatIds.Contains(m.Id)).ToList();
         MarkChatSeen(chat);
 
-        if (!_voiceNotifyEnabled || fresh.Count == 0)
+        if (!_chatVoiceEnabled || fresh.Count == 0)
             return;
 
         _ = SpeakNewChatAsync(fresh);
@@ -2047,6 +2193,12 @@
     }
 
     private async Task ClearOfferAsync() => await RunAsync(() => Game.ClearOfferAsync());
+    private async Task ConfirmSettlementAsync(string id) =>
+        await RunAsync(() => Game.ConfirmPrepSettlementAsync(id));
+
+    private async Task SkipDisconnectedSettlementAsync(string id) =>
+        await RunAsync(() => Game.ConfirmPrepSettlementAsync(id, skipDisconnected: true));
+
     private async Task PassArcanaAsync() => await RunAsync(() => Game.PassArcanaAsync());
 
     private async Task PlayArcanaAsync()
@@ -2309,9 +2461,12 @@
         }
     }
 
-    private void ToggleChatPresets()
+    private async Task ToggleChatPresets()
     {
-        _chatPresetsOpen = !_chatPresetsOpen;
+        var opening = !_chatPresetsOpen;
+        _chatPresetsOpen = opening;
+        if (opening)
+            await SyncThemeAsync();
     }
 
     private async Task SendPresetAsync(string text)

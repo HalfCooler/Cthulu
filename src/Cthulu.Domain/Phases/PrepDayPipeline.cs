@@ -164,7 +164,7 @@ public static class PrepDayPipeline
         offer.Gems.AddRange(selected);
         state.Offers[playerId] = offer;
 
-        state.Log("OfferSubmit", $"{player.Name} 提交供奉 {offer.GemCount} 张宝石");
+        state.LogAction(playerId, "OfferSubmit", $"{player.Name} 提交供奉 {offer.GemCount} 张宝石");
 
         if (state.Offers.Count >= state.PlayerCount &&
             state.Players.All(p => state.Offers.ContainsKey(p.Id)))
@@ -189,7 +189,7 @@ public static class PrepDayPipeline
 
         player.GemHand.AddRange(offer.Gems);
         state.Offers.Remove(playerId);
-        state.Log("OfferClear", $"{player.Name} 撤回供奉");
+        state.LogAction(playerId, "OfferClear", $"{player.Name} 撤回供奉");
         return DomainResult.Success();
     }
 
@@ -218,7 +218,7 @@ public static class PrepDayPipeline
             return DomainResult.Fail(DomainErrorCodes.NotYourTurn, "还没轮到你");
 
         player.HasActedArcana = true;
-        state.Log("ArcanaPass", $"{player.Name} 跳过秘术");
+        state.LogAction(playerId, "ArcanaPass", $"{player.Name} 跳过秘术");
         AdvanceArcanaActor(state);
         return DomainResult.Success();
     }
@@ -265,7 +265,11 @@ public static class PrepDayPipeline
                 validation.Message ?? "效果无效");
 
         // Apply while card still in hand (FelReplenish counts correctly)
+        var previousEvents = state.EventLog.ToHashSet();
         var result = effect.Apply(state, playerId, target);
+        state.RecordAction(playerId, $"{player.Name} 使用「{ArcanaDisplayName(kind)}」" +
+            (result.NeedMoreInput ? "，正在处理效果" : "，效果已结算"),
+            state.EventLog.Where(e => !e.IsPrivate && !previousEvents.Contains(e)).Select(e => e.Message).ToArray());
 
         // Discard the played arcana immediately (even for multi-step)
         player.ArcanaHand.Remove(card);
@@ -309,12 +313,24 @@ public static class PrepDayPipeline
             return DomainResult.Fail(DomainErrorCodes.EffectInvalid, "秘术效果丢失");
 
         target ??= new ArcanaTarget();
+        var previousEvents = state.EventLog.ToHashSet();
+        var previousAction = state.RecentActions.GetValueOrDefault(active.ActorId);
         var result = effect.Continue(state, responderId, stepId, target);
 
         if (result.Failed)
             return DomainResult.Fail(
                 result.ErrorCode ?? DomainErrorCodes.EffectInvalid,
                 result.Message ?? "秘术步骤无效");
+
+        var publicDetails = state.EventLog.Where(e => !e.IsPrivate && !previousEvents.Contains(e))
+            .Select(e => e.Message).ToArray();
+        if (responderId != active.ActorId)
+            state.RecordAction(responderId,
+                $"{state.FindPlayer(responderId)?.Name} 已回应「{ArcanaDisplayName(active.Kind)}」", publicDetails);
+        state.RecordAction(active.ActorId,
+            $"{state.FindPlayer(active.ActorId)?.Name} 使用「{ArcanaDisplayName(active.Kind)}」" +
+            (result.NeedMoreInput ? "，正在处理效果" : "，效果已结算"),
+            (previousAction?.Details ?? Array.Empty<string>()).Concat(publicDetails).Distinct().ToArray());
 
         if (result.NeedMoreInput)
         {
@@ -364,8 +380,12 @@ public static class PrepDayPipeline
     /// <summary>Prep_Resolve pipeline (ENGINEERING §11.3 / §24).</summary>
     public static void ResolvePrep(GameState state)
     {
+        // A settled day must never be paid out twice while players read its receipt.
+        if (state.Phase == GamePhase.Prep_Resolve && state.LastPrepSettlement?.DayNumber == state.PrepDayNumber)
+            return;
         state.Phase = GamePhase.Prep_Resolve;
         state.ActiveArcana = null;
+        var settlement = new PrepSettlement { DayNumber = state.PrepDayNumber };
 
         // Snapshot offers before ResolveOffersToRelics clears Offers/Altar.
         foreach (var player in state.Players)
@@ -386,10 +406,33 @@ public static class PrepDayPipeline
                 $"玩家 {player.Name} 供奉的序号是 {offer.Rank}，祭品是 {relicName}，供奉了宝石总数是 {offer.GemCount}（sum={offer.Sum}）");
         }
 
-        ResolveOffersToRelics(state);
+        ResolveOffersToRelics(state, settlement);
 
         state.Log("PrepResolveDone", $"第 {state.PrepDayNumber} 个筹备日结算完成");
-        AdvanceCalendarAfterPrep(state);
+        state.LastPrepSettlement = settlement;
+        // Bots do not participate in the reading gate; humans explicitly continue.
+    }
+
+    public static DomainResult ConfirmPrepSettlement(GameState state, PlayerId playerId, string settlementId)
+    {
+        var settlement = state.LastPrepSettlement;
+        if (state.Phase != GamePhase.Prep_Resolve || settlement is null || settlement.Id != settlementId)
+            return DomainResult.Fail(DomainErrorCodes.InvalidPhase, "该结算已结束，请查看当前桌面");
+        if (state.FindPlayer(playerId) is null)
+            return DomainResult.Fail(DomainErrorCodes.NotInRoom, "玩家不在对局中");
+
+        settlement.ConfirmedPlayers.Add(playerId);
+        TryContinueAfterSettlement(state);
+        return DomainResult.Success();
+    }
+
+    public static void TryContinueAfterSettlement(GameState state)
+    {
+        if (state.Phase != GamePhase.Prep_Resolve || state.LastPrepSettlement is not { } settlement)
+            return;
+        if (state.Players.Where(p => !p.IsBot).All(p =>
+                settlement.ConfirmedPlayers.Contains(p.Id) || settlement.SkippedPlayers.Contains(p.Id)))
+            AdvanceCalendarAfterPrep(state);
     }
 
     /// <summary>R10: after prep resolve, continue segment / offering / recovery placeholder.</summary>
@@ -418,7 +461,7 @@ public static class PrepDayPipeline
     /// Resolve altar offers (R1–R3, R19–R20): award relics, discard spent gems.
     /// Does not advance the calendar (used by prep resolve and recovery all-in).
     /// </summary>
-    public static void ResolveOffersToRelics(GameState state)
+    public static void ResolveOffersToRelics(GameState state, PrepSettlement? settlement = null)
     {
         var dead = ComputeDeadPlayers(state);
         if (dead.Count > 0)
@@ -430,6 +473,27 @@ public static class PrepDayPipeline
         for (var slot = 0; slot < state.Altar.Count; slot++)
         {
             var rank = GameRules.SlotIndexToRank(slot);
+            SettlementSlot? receipt = null;
+            if (settlement is not null)
+            {
+                receipt = new SettlementSlot
+                {
+                    Rank = rank.ToString(),
+                    RelicName = RelicDisplay(state.Altar[slot]),
+                    Reverse = state.AltarModifiers.HasReverse(slot),
+                    EvilProphecy = state.AltarModifiers.HasEvilProphecy(slot),
+                    Offers = state.Players.Where(p => state.Offers.TryGetValue(p.Id, out var o) && o.Rank == rank)
+                        .Select(p =>
+                        {
+                            var offer = state.Offers[p.Id];
+                            var status = dead.Contains(p.Id) ? "同序号、同点数，供奉失效"
+                                : state.AltarModifiers.HasEvilProphecy(slot) && offer.Sum < 4
+                                    ? "邪恶预言：点数不足 4，供奉失效" : "有效供奉";
+                            return new SettlementOffer(p.Name, offer.GemCount, offer.Sum, status);
+                        }).ToArray(),
+                };
+                settlement.Slots.Add(receipt);
+            }
             var candidates = new List<(PlayerState Player, int Power)>();
 
             foreach (var p in state.Players)
@@ -451,6 +515,7 @@ public static class PrepDayPipeline
             var relic = state.Altar[slot];
             if (candidates.Count == 0)
             {
+                if (receipt is not null) receipt.Outcome = "无人有效供奉，祭品弃置";
                 state.RelicDiscard.Add(relic);
                 state.Log("RelicVoid", $"祭坛槽 {slot + 1}（{RelicDisplay(relic)}）无人有效供奉，进入弃牌");
                 continue;
@@ -465,6 +530,8 @@ public static class PrepDayPipeline
             if (winners.Count == 1)
             {
                 var w = winners[0].Player;
+                if (receipt is not null)
+                    receipt.Outcome = $"{w.Name} 获得祭品：有效供奉中点数{(reverse ? "最低" : "最高")}（{targetPower} 点）";
                 w.Relics.Add(relic);
                 state.Log(
                     "RelicWon",
@@ -474,6 +541,7 @@ public static class PrepDayPipeline
             }
             else
             {
+                if (receipt is not null) receipt.Outcome = "有效供奉并列，祭品弃置";
                 state.RelicDiscard.Add(relic);
                 state.Log(
                     "RelicTie",

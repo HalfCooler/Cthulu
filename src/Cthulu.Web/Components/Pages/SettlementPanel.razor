@@ -1,0 +1,79 @@
+@using Cthulu.Application.Views
+
+<section class="panel settlement-panel @(Receipt.AwaitingConfirmation ? "settlement-waiting" : null)">
+    <div class="panel-title-row">
+        <h2>第 @Receipt.DayNumber 天 · 筹备日结算</h2>
+        @if (Receipt.AwaitingConfirmation)
+        {
+            <span class="badge">桌面停留中</span>
+        }
+        else
+        {
+            <button type="button" class="btn btn-ghost btn-sm" aria-expanded="@_expanded"
+                    @onclick="() => _expanded = !_expanded">@(_expanded ? "收起回看" : "回看上次结算")</button>
+        }
+    </div>
+    @if (Receipt.AwaitingConfirmation || _expanded)
+    {
+        <p class="muted small">@(Receipt.AwaitingConfirmation
+            ? "祭品已分配，下一阶段尚未开始。看看大家供奉了什么、祭品归谁，再继续。"
+            : "这是上次筹备日的只读结算记录，下方显示当前桌面。")</p>
+        <div class="settlement-grid">
+            @foreach (var slot in Receipt.Slots)
+            {
+                <article class="settlement-slot">
+                    <div class="settlement-slot-title"><span class="rank-chip">序号 @slot.Rank</span><strong>@slot.RelicName</strong></div>
+                    <p class="muted small">@(slot.Reverse ? "逆向思维：有效供奉中点数最低者获得" : "有效供奉中点数最高者获得")</p>
+                    @if (slot.EvilProphecy)
+                    {
+                        <p class="small">邪恶预言：不足 4 点的供奉无效</p>
+                    }
+                    @if (slot.Offers.Count == 0)
+                    {
+                        <p class="muted">无人供奉</p>
+                    }
+                    @foreach (var offer in slot.Offers)
+                    {
+                        <div class="settlement-offer">
+                            <div><strong>@offer.PlayerName</strong><span>@offer.GemCount 张 · @offer.Sum 点</span></div>
+                            <span class="small @(offer.Status == "有效供奉" ? "muted" : "settlement-invalid")">@offer.Status</span>
+                        </div>
+                    }
+                    <p class="settlement-outcome">@slot.Outcome</p>
+                </article>
+            }
+        </div>
+        @if (Receipt.AwaitingConfirmation)
+        {
+            <div class="settlement-footer">
+                <div role="status" aria-live="polite">
+                    <strong>已看完 @Receipt.ConfirmedCount / @Receipt.HumanCount 人</strong>
+                    @if (Receipt.SkippedCount > 0)
+                    {
+                        <span class="muted"> · 已略过 @Receipt.SkippedCount 人</span>
+                    }
+                    <p class="muted small">等待：@string.Join("、", Receipt.WaitingNames)</p>
+                </div>
+                <div class="action-bar compact">
+                    <button type="button" class="btn btn-primary" disabled="@(Busy || Receipt.HasConfirmed)"
+                            @onclick="() => OnConfirm.InvokeAsync(Receipt.Id)">
+                        @(Receipt.HasConfirmed ? "已看完，等待其他玩家" : "我看完了，准备继续")
+                    </button>
+                    @if (Receipt.CanSkipDisconnected)
+                    {
+                        <button type="button" class="btn btn-ghost" disabled="@Busy"
+                                @onclick="() => OnSkipDisconnected.InvokeAsync(Receipt.Id)">略过离线玩家</button>
+                    }
+                </div>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public PrepSettlementView Receipt { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<string> OnConfirm { get; set; }
+    [Parameter] public EventCallback<string> OnSkipDisconnected { get; set; }
+    private bool _expanded;
+}

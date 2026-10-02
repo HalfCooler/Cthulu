@@ -144,6 +144,14 @@ public sealed class GameHub(RoomService rooms, ILogger<GameHub> logger) : Hub
         return result;
     }
 
+    public async Task<CommandResult> ConfirmPrepSettlement(string settlementId, bool skipDisconnected)
+    {
+        var result = rooms.ConfirmPrepSettlement(Context.ConnectionId, settlementId, skipDisconnected);
+        if (result.Ok)
+            await PushRoomToAllAsync(Context.ConnectionId);
+        return result;
+    }
+
     public async Task<CommandResult> PassArcana()
     {
         var result = rooms.PassArcana(Context.ConnectionId);

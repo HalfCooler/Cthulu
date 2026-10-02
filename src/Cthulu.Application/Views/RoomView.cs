@@ -34,8 +34,11 @@ public sealed class RoomView
 
     // --- Game ---
     public int PrepDayNumber { get; init; }
+    public PrepSettlementView? LastPrepSettlement { get; init; }
     public int CycleIndex { get; init; }
     public int PrepDaysRemainingInCycle { get; init; }
+    /// <summary>After remaining prep days, go to recovery instead of offering day.</summary>
+    public bool NextSegmentIsRecovery { get; init; }
     public string? DealerName { get; init; }
     public string? CurrentActorName { get; init; }
     public string? CurrentActorPlayerId { get; init; }
@@ -123,6 +126,9 @@ public sealed class AuctionView
 
 public sealed class PlayerPublicView
 {
+    public string? RecentAction { get; init; }
+    public string? RecentActionContext { get; init; }
+    public IReadOnlyList<string> RecentActionDetails { get; init; } = Array.Empty<string>();
     public required string PlayerId { get; init; }
     public required string Name { get; init; }
     public required int SeatIndex { get; init; }
@@ -151,6 +157,32 @@ public sealed class PlayerPublicView
     public bool HasActedTrade { get; init; }
     public bool HasVoted { get; init; }
 }
+
+public sealed class PrepSettlementView
+{
+    public required string Id { get; init; }
+    public int DayNumber { get; init; }
+    public bool AwaitingConfirmation { get; init; }
+    public bool HasConfirmed { get; init; }
+    public bool CanSkipDisconnected { get; init; }
+    public int ConfirmedCount { get; init; }
+    public int SkippedCount { get; init; }
+    public int HumanCount { get; init; }
+    public IReadOnlyList<string> WaitingNames { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<SettlementSlotView> Slots { get; init; } = Array.Empty<SettlementSlotView>();
+}
+
+public sealed class SettlementSlotView
+{
+    public required string Rank { get; init; }
+    public required string RelicName { get; init; }
+    public bool Reverse { get; init; }
+    public bool EvilProphecy { get; init; }
+    public required string Outcome { get; init; }
+    public IReadOnlyList<SettlementOfferView> Offers { get; init; } = Array.Empty<SettlementOfferView>();
+}
+
+public sealed record SettlementOfferView(string PlayerName, int GemCount, int Sum, string Status);
 
 public sealed class RelicItemView
 {

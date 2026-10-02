@@ -133,6 +133,8 @@ public static class RecoveryDayPipeline
         auction.CurrentBidGems.AddRange(selected);
         auction.ConsecutivePasses = 0;
 
+        state.RecordAction(playerId, $"{player.Name} 加价至 {selected.Count} 张宝石");
+
         state.Log(
             "AuctionRaise",
             $"{player.Name} 加价 {selected.Count} 张宝石（sum={newSum}，公开张数）");
@@ -171,7 +173,7 @@ public static class RecoveryDayPipeline
 
         auction.PassedPlayers.Add(playerId);
         auction.ConsecutivePasses++;
-        state.Log("AuctionPass", $"{player.Name} 放弃本轮竞拍");
+        state.LogAction(playerId, "AuctionPass", $"{player.Name} 放弃本轮竞拍");
 
         if (TryEndAuctionAfterPass(state, auction))
             return DomainResult.Success();
@@ -248,6 +250,8 @@ public static class RecoveryDayPipeline
         offer.Gems.AddRange(player.GemHand);
         player.GemHand.Clear();
         state.Offers[playerId] = offer;
+
+        state.RecordAction(playerId, $"{player.Name} 已提交全下供奉（{offer.GemCount} 张宝石）");
 
         state.Log(
             "AllInSubmit",
